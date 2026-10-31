@@ -1,0 +1,37 @@
+# Variables de entorno y secretos
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Testing y cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Herramientas de desarrollo
+.vscode/
+.idea/
+
+# Bases de datos locales
+*.db
+*.sqlite
+*.sqlite3
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
