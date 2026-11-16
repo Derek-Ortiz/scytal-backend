@@ -1,6 +1,8 @@
-# Scytal — Backend de Autenticación (Fase Auth)
+# Scytal — Backend
 
-API FastAPI con las 9 rutas de `/auth` definidas en `Scytal_Especificacion_Backend.md` (§4.1), alineadas con `squema.sql` + columna `slug` en `organizaciones`.
+API FastAPI. **Fase Auth** (§4.1) + **Fase Organizations/Users** (§4.3/§4.4) implementadas; el resto de módulos
+(groups, recipients, templates, campaigns, track, maturity, alerts, audit, reports) se integra por fases según
+`Scytal_Especificacion_Backend.md`.
 
 Stack: Python 3.12 · FastAPI · SQLAlchemy 2.0 async · PostgreSQL 15 · Redis 7 · Argon2id · TOTP (pyotp) · JWT.
 
@@ -12,17 +14,11 @@ cp .env.example .env
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 docker compose up --build -d
 curl http://localhost:8000/health
-# Crear el admin_plataforma inicial (una sola vez)
-docker compose exec api python -m seeds.seed_admin
 ```
 
-Servicios:
-- API: http://localhost:8000 (docs OpenAPI en /docs)
-- PostgreSQL: `localhost:5432` (scytal / scytal_pass)
-- Redis: `localhost:6379`
-- MailHog: http://localhost:8025 (SMTP en 1025)
-
-La BD se crea desde `squema.sql` + `migrations/add_slug.sql` (volúmenes en `docker-compose.yml`). Si ya existía la BD, aplica la migración Alembic `0001` o el SQL de slug suelto.
+El contenedor `api` ejecuta automáticamente al arrancar: `alembic upgrade head && python -m seeds.seed_admin`
+(Alembic es la única fuente de verdad del esquema: 0001 baseline auth + 0002 dominio completo).
+**`squema.sql` y `migrations/add_slug.sql` se conservan en el repo solo como referencia histórica** — el sistema ya no los usa.
 
 ## 2. Flujo de autenticación
 
@@ -36,7 +32,9 @@ La BD se crea desde `squema.sql` + `migrations/add_slug.sql` (volúmenes en `doc
 8. **Refresh** — `POST /auth/refresh` → nuevo access.
 9. **Logout / cambio de contraseña** — incrementan `version_token` e **invalidan todos los JWT previos** de ese usuario.
 
-## 3. Endpoints (`/auth`)
+## 3. Endpoints implementados
+
+### `/auth` (§4.1 — 9 rutas)
 
 | Método | Ruta | Auth | Descripción |
 |---|---|---|---|
@@ -50,7 +48,29 @@ La BD se crea desde `squema.sql` + `migrations/add_slug.sql` (volúmenes en `doc
 | POST | `/auth/password/change` | Bearer access (cualquier estado) | Body `{contrasena_actual, contrasena_nueva}` |
 | GET | `/auth/me` | Bearer access (cualquier estado) | Datos de la cuenta en sesión |
 
-Errores estándar §6.5: `{"error": {"code": "...", "message": "...", "details": null}}`. Códigos: `INVALID_CREDENTIALS` (401, sin revelar qué falló), `INVALID_TOKEN`, `SESSION_INVALIDATED`, `PENDING_2FA`, `INVALID_TOTP`, `INVALID_PASSWORD`, `DUPLICATE`, `RATE_LIMITED` (429 con `Retry-After`), `INTERNAL_ERROR`.
+Errores estándar §6.5: `{"error": {"code": "...", "message": "...", "details": null}}` (el handler global de HTTPException
+normaliza todas las respuestas; `RATE_LIMITED` 429 incluye header `Retry-After`). Códigos: `INVALID_CREDENTIALS` (401, sin revelar qué falló), `INVALID_TOKEN`, `SESSION_INVALIDATED`, `PENDING_2FA`, `INVALID_TOTP`, `INVALID_PASSWORD`, `DUPLICATE`, `RATE_LIMITED` (429 con `Retry-After`), `VALIDATION_ERROR`, `NOT_FOUND`, `FORBIDDEN`, `INTERNAL_ERROR`.
+
+### `/organizations` (§4.3 + decisión #7)
+
+| Método | Ruta | Auth | Descripción |
+|---|---|---|---|
+| POST | `/organizations` | `admin_plataforma` | Crea organización. `correo_admin?` opcional: crea además su admin con contraseña temporal + correo de credenciales |
+| GET | `/organizations` | `admin_plataforma` | Lista TODAS las organizaciones con métricas (usuarios, grupos, destinatarios, campañas) |
+| GET | `/organizations/{id}` | `admin_plataforma` o miembro de la org | Detalle + métricas (org_id del JWT, §6.1) |
+| PATCH | `/organizations/{id}` | `admin_organizacion` de esa org | Edita nombre/slug (audita `org_updated`) |
+
+### `/users` (§4.4 + decisiones #9 y #11)
+
+| Método | Ruta | Auth | Descripción |
+|---|---|---|---|
+| GET | `/users` | `admin_organizacion`, `analista` | Usuarios de la propia organización (paginado, limit ≤ 100) |
+| POST | `/users/invite` | `admin_organizacion` | Invita `analista`: contraseña temporal aleatoria (§5) por correo, `pendiente_2fa`, cambio FORZOSO en primer login |
+| PATCH | `/users/{id}/role` | `admin_organizacion` | `analista` ↔ `admin_organizacion` (no deja a la org sin admin; audita `role_change`) |
+| PATCH | `/users/{id}/deactivate` | `admin_organizacion` | Borrado lógico: conserva datos, mata sesiones (`version_token+1`) |
+
+**Cambio forzado de contraseña (invitados):** las rutas de negocio responden `403 PASSWORD_CHANGE_REQUIRED`
+hasta que el invitado use `/auth/password/change` (el login ya trae `requires_password_change: true`).
 
 ## 4. Seguridad implementada
 
@@ -68,21 +88,23 @@ Errores estándar §6.5: `{"error": {"code": "...", "message": "...", "details":
 
 ```
 app/
-  main.py              # FastAPI, middlewares, handler de errores
-  deps.py              # get_current_user / get_current_org / get_pending_user
+  main.py              # FastAPI, middlewares, handler de errores §6.5
+  deps.py              # get_current_user / get_current_org / get_pending_user / require_roles
   core/                # config, security (Argon2/JWT/Fernet/TOTP), rate_limit, logging
   db/                  # engine async + Base
-  models/              # Organizacion (con slug), Usuario, HistorialContrasenas, EventoAuditoria
-  schemas/             # Pydantic v2 por módulo
-  routers/             # auth.py (prefix /auth, 9 rutas)
-  services/            # auth_service, password_service (zxcvbn+HIBP+historial), hibp_service (cache Redis)
-  repositories/        # acceso a datos con filtro org_id
+  models/              # 12 tablas del dominio (auth + orgs + campañas + tracking + alertas)
+  schemas/             # Pydantic v2 por módulo (auth, organizacion, usuario)
+  routers/             # auth.py, organizations.py, users.py
+  services/            # auth, password (zxcvbn+HIBP), hibp, email (reintentos+delay), usuario, organizacion, maturity (puro)
+  repositories/        # acceso a datos con filtro org_id (§6.1)
   middlewares/         # security_headers (CORS ya en main, cabeceras, request_id)
-alembic/               # migraciones (0001 baseline + slug)
-seeds/seed_admin.py   # admin_plataforma inicial
-migrations/add_slug.sql # ALTER TABLE para slug (también corre en initdb)
-squema.sql             # esquema original del proyecto
-docker-compose.yml     # db + redis + mailhog + api
+alembic/               # 0001 baseline auth + 0002 dominio completo (fuente única del esquema)
+tests/                 # unit/ + integration/ (pytest, 13 pruebas)
+seeds/seed_admin.py    # admin_plataforma inicial
+migrations/add_slug.sql # referencia histórica (el sistema ya no lo usa)
+squema.sql             # esquema original de referencia (el sistema ya no lo usa)
+docker-compose.yml     # db + redis + mailhog + api (api corre alembic + seed al arrancar)
+prompt_frontend.md     # contrato API ↔ frontend (fuente única para el IA del frontend)
 ```
 
 Regla de capas: routers → services → repositories; nunca SQL directo en routers.
@@ -91,27 +113,29 @@ Regla de capas: routers → services → repositories; nunca SQL directo en rout
 
 Ver `.env.example`. Obligatorias: `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `TOTP_ENCRYPTION_KEY`. Además `PLATFORM_ADMIN_EMAIL` y `PLATFORM_ADMIN_PASSWORD` para el seed, `CORS_ALLOWED_ORIGINS` con el origen del frontend, y `HIBP_API_URL`.
 
-## 7. Pruebas ejecutadas (verificación)
+## 7. Pruebas
 
-| # | Prueba | Resultado |
+```bash
+# Unitarias (sin BD, HIBP mockeado)
+python -m pytest tests/unit -q
+
+# Integración (requiere docker compose con db+redis; crea orgs/usuarios de prueba en scytal_test)
+$env:DATABASE_URL="postgresql+asyncpg://scytal:scytal_pass@127.0.0.1:5432/scytal_test"
+$env:REDIS_URL="redis://127.0.0.1:6379/0"
+$env:JWT_SECRET="un-secreto-de-prueba-largo"
+$env:TOTP_ENCRYPTION_KEY=(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+python -m pytest tests -q
+```
+
+Cobertura actual (13 pruebas):
+| # | Prueba | Qué valida |
 |---|---|---|
-| 1 | Register con contraseña débil | 422 — rechaza por lista local + zxcvbn + HIBP (en vivo) |
-| 2 | Register válido (correo con espacios/mayúsculas, slug null) | 201 — correo normalizado, slug `empresa-demo` autogenerado |
-| 3 | Register duplicado | 409 DUPLICATE |
-| 4 | Login cuenta nueva | `must_enroll_totp:true` + `provisional_access_token` |
-| 5 | Enroll TOTP | QR + secreto retornados una vez |
-| 6 | Confirm con código real pyotp | `2FA activado`; re-confirm → 403 ALREADY_ACTIVE |
-| 7 | Login con TOTP | `requires_totp:true` + `pending_token` |
-| 8 | Verify-TOTP con código | Tokens access+refresh emitidos |
-| 9 | Replay del mismo código | 401 INVALID_TOTP (bloqueado por `ultimo_totp_step`) |
-| 10-11 | `/auth/me` con y sin token | 200 con datos / 401 sin token |
-| 12 | Refresh | nuevo access emitido |
-| 13-15 | Logout y tokens viejos | access y refresh anteriores → 401 SESSION_INVALIDATED |
-| 17-20 | Cambio de contraseña | 401 actual incorrecta / 422 reutilizada / OK / sesión vieja muerta |
-| 21 | Rate limit login (11 intentos) | 429 tras el presupuesto 10/15min por IP+correo |
-| 22-27 | Flujo completo `admin_plataforma` (org nula) | provisional → enroll → confirm → login → verify OK |
-
-Reset completo de la BD de pruebas: `docker compose down -v && docker compose up db redis mailhog -d`.
+| 1-3 | slugify | Normalización de slugs (unitaria) |
+| 4-8 | índice de phishing | Fórmula 25/25/50 y niveles (unitaria) |
+| 9-10 | contraseña temporal | Cumple §5, aleatoria (unitaria) |
+| 11 | **Aislamiento multi-tenant** | Org A → 403 sobre org B (leer/editar/listar); ve la propia con métricas |
+| 12 | `admin_plataforma` lista todas las orgs | Decisión #7 con métricas |
+| 13 | **Invitación de analista completa** | Invite → login → 403 `PASSWORD_CHANGE_REQUIRED` → cambio → acceso; cambio/desactivación de rol; sesión muerta tras desactivar |
 
 ## 8. Notas de despliegue local
 

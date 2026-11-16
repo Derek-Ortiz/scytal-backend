@@ -38,10 +38,13 @@ async def _load_user(claims: dict, db: AsyncSession) -> Usuario:
 
 
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> Usuario:
-    """Para rutas de negocio: exige estado activo."""
+    """Para rutas de negocio: exige estado activo y contraseña cambiada (invitados nuevos)."""
     user = await _load_user(_claims_bearer(request), db)
     if user.estado != "activo":
         raise HTTPException(403, detail={"error": {"code": "PENDING_2FA", "message": "Debe completar el enrolamiento 2FA"}})
+    if user.debe_cambiar_contrasena:
+        # Decisión #11: el invitado con contraseña temporal no toca rutas de negocio hasta cambiarla.
+        raise HTTPException(403, detail={"error": {"code": "PASSWORD_CHANGE_REQUIRED", "message": "Debes cambiar tu contraseña temporal antes de continuar"}})
     return user
 
 
@@ -62,3 +65,25 @@ async def get_pending_user(request: Request, db: AsyncSession = Depends(get_db))
     if user.estado != "pendiente_2fa":
         raise HTTPException(403, detail={"error": {"code": "ALREADY_ACTIVE", "message": "La cuenta ya está activa"}})
     return user
+
+
+def require_roles(*roles: str):
+    """Guarda de rol para routers: `Depends(require_roles('admin_organizacion'))`."""
+
+    async def _dep(user: Usuario = Depends(get_current_user)) -> Usuario:
+        if user.rol not in roles:
+            raise HTTPException(403, detail={"error": {"code": "FORBIDDEN", "message": "No tienes permisos para esta acción"}})
+        return user
+
+    return _dep
+
+
+def require_admin_plataforma():
+    """Guarda específica para admin_plataforma (sin org)."""
+
+    async def _dep(user: Usuario = Depends(get_current_user)) -> Usuario:
+        if user.rol != "admin_plataforma":
+            raise HTTPException(403, detail={"error": {"code": "FORBIDDEN", "message": "Solo admin_plataforma"}})
+        return user
+
+    return _dep

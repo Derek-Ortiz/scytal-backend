@@ -1,5 +1,6 @@
 import uuid
-from sqlalchemy import or_, select
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.auditoria import EventoAuditoria
@@ -47,3 +48,28 @@ async def save_audit(db: AsyncSession, org_id: uuid.UUID | None, tipo: str, deta
     ev = EventoAuditoria(org_id=org_id, tipo=tipo, actor_id=actor_id, detalle=detalle)
     db.add(ev)
     # flush lo hace el llamador (commit al final)
+
+
+# ---- /users (§4.4) ----
+
+
+async def list_by_org(db: AsyncSession, org_id: uuid.UUID, limit: int, offset: int) -> tuple[int, list[Usuario]]:
+    """Usuarios de una organización, filtrados por org_id del JWT (§6.1)."""
+    total = (await db.execute(select(func.count()).select_from(Usuario).where(Usuario.org_id == org_id))).scalar_one()
+    res = await db.execute(
+        select(Usuario).where(Usuario.org_id == org_id).order_by(Usuario.creado_en.asc()).limit(limit).offset(offset)
+    )
+    return total, list(res.scalars().all())
+
+
+async def find_by_id_in_org(db: AsyncSession, uid: uuid.UUID, org_id: uuid.UUID) -> Usuario | None:
+    """Búsqueda siempre acotada a la organización del actor — nunca acepta org_id de la URL/body."""
+    res = await db.execute(select(Usuario).where(Usuario.id_usuarios == uid, Usuario.org_id == org_id))
+    return res.scalar_one_or_none()
+
+
+async def count_by_role(db: AsyncSession, org_id: uuid.UUID, rol: str) -> int:
+    res = await db.execute(
+        select(func.count()).select_from(Usuario).where(Usuario.org_id == org_id, Usuario.rol == rol, Usuario.activo.is_(True))
+    )
+    return res.scalar_one()

@@ -15,8 +15,11 @@ from app.services import auth_service
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _raise(code: str, message: str, status_code: int):
-    raise HTTPException(status_code=status_code, detail=error_payload(code, message).model_dump())
+def _raise(code: str, message: str, status_code: int, headers: dict | None = None):
+    raise HTTPException(status_code=status_code, detail=error_payload(code, message).model_dump(), headers=headers)
+
+
+_RETRY_15MIN = {"Retry-After": "900"}
 
 
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
@@ -36,7 +39,7 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
     ip = request.client.host if request.client else "unknown"
     key = f"rl:login:{ip}:{body.correo.lower().strip()}"
     if not await check_limit(key, limit=10, window_seconds=900):
-        _raise("RATE_LIMITED", "Demasiados intentos. Inténtalo de nuevo en 15 minutos.", 429)
+        _raise("RATE_LIMITED", "Demasiados intentos. Inténtalo de nuevo en 15 minutos.", 429, headers=_RETRY_15MIN)
     result = await auth_service.login(db, body.correo, body.contrasena, ip, request.headers.get("x-request-id", ""))
     if not result.get("ok"):
         _raise("INVALID_CREDENTIALS", "Correo o contraseña incorrectos", 401)
@@ -53,8 +56,12 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
 
 @router.post("/login/verify-totp", response_model=TokenResponse)
 async def verify_totp(body: VerifyTotpRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    if not await check_limit(f"rl:totp:{body.pending_token[:32]}", limit=5, window_seconds=900):
-        _raise("RATE_LIMITED", "Demasiados intentos de TOTP.", 429)
+    import hashlib
+
+    # Clave por SESIÓN temporal: hash del token completo (los JWT comparten header, el prefijo agruparía todas)
+    sesion = hashlib.sha256(body.pending_token.encode()).hexdigest()[:32]
+    if not await check_limit(f"rl:totp:{sesion}", limit=5, window_seconds=900):
+        _raise("RATE_LIMITED", "Demasiados intentos de TOTP.", 429, headers=_RETRY_15MIN)
     try:
         tokens = await auth_service.verify_totp_login(db, body.pending_token, body.codigo, request.headers.get("x-request-id", ""))
     except ValueError as e:
