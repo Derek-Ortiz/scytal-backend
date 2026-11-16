@@ -72,6 +72,27 @@ normaliza todas las respuestas; `RATE_LIMITED` 429 incluye header `Retry-After`)
 **Cambio forzado de contraseña (invitados):** las rutas de negocio responden `403 PASSWORD_CHANGE_REQUIRED`
 hasta que el invitado use `/auth/password/change` (el login ya trae `requires_password_change: true`).
 
+### `/groups` (§4.5 — Fase 2)
+
+| Método | Ruta | Auth | Descripción |
+|---|---|---|---|
+| POST | `/groups` | `admin_organizacion` | Crea grupo `{nombre, perfil}`; nombre duplicado (case-insensitive) → 409 |
+| GET | `/groups` | `admin_organizacion`, `analista` | Grupos de la org con métricas: destinatarios activos + índice promedio (último puntaje por destinatario) |
+| GET | `/groups/{id}` | ambos roles | Detalle + métricas |
+| PATCH | `/groups/{id}` | `admin_organizacion` | Edita nombre/perfil |
+| DELETE | `/groups/{id}` | `admin_organizacion` | 204; **409 `CONFLICT`** si tiene campañas (RESTRICT); destinatarios se borran en cascada |
+
+### `/recipients` (§4.6 — Fase 2)
+
+| Método | Ruta | Auth | Descripción |
+|---|---|---|---|
+| POST | `/recipients` | `admin_organizacion` | Alta individual `{correo, grupo_id}`; correo único por org (case-insensitive) → 409 |
+| POST | `/recipients/import` | `admin_organizacion` | CSV multipart (`file`, máx 2 MB, encabezados `correo,grupo`): dedupe in-file y contra la org, reporta fila por fila → `{total_filas, creados, duplicados, invalidos, errores}` |
+| GET | `/recipients` | ambos roles | Listado con filtro `?grupo_id=`; incluye inactivos |
+| GET | `/recipients/{id}` | ambos roles | Detalle + histórico de instantáneas del índice de phishing |
+| PATCH | `/recipients/{id}` | `admin_organizacion` | Edita correo y/o grupo |
+| PATCH | `/recipients/{id}/deactivate` | `admin_organizacion` | Borrado lógico: conserva datos e histórico (decisión #9) |
+
 ## 4. Seguridad implementada
 
 - **Contraseñas**: Argon2id (OWASP), mín. 10 caracteres, zxcvbn ≥ 3, lista local, HIBP (k-anonimato, cache Redis), historial últimas 3, rotación 90 días.
@@ -93,13 +114,13 @@ app/
   core/                # config, security (Argon2/JWT/Fernet/TOTP), rate_limit, logging
   db/                  # engine async + Base
   models/              # 12 tablas del dominio (auth + orgs + campañas + tracking + alertas)
-  schemas/             # Pydantic v2 por módulo (auth, organizacion, usuario)
-  routers/             # auth.py, organizations.py, users.py
-  services/            # auth, password (zxcvbn+HIBP), hibp, email (reintentos+delay), usuario, organizacion, maturity (puro)
+  schemas/             # Pydantic v2 por módulo (auth, organizacion, usuario, grupo, destinatario)
+  routers/             # auth.py, organizations.py, users.py, groups.py, recipients.py
+  services/            # auth, password (zxcvbn+HIBP), hibp, email (reintentos+delay), usuario, organizacion, grupo, destinatario (CSV), maturity (puro)
   repositories/        # acceso a datos con filtro org_id (§6.1)
   middlewares/         # security_headers (CORS ya en main, cabeceras, request_id)
 alembic/               # 0001 baseline auth + 0002 dominio completo (fuente única del esquema)
-tests/                 # unit/ + integration/ (pytest, 13 pruebas)
+tests/                 # unit/ + integration/ (pytest, 32 pruebas)
 seeds/seed_admin.py    # admin_plataforma inicial
 migrations/add_slug.sql # referencia histórica (el sistema ya no lo usa)
 squema.sql             # esquema original de referencia (el sistema ya no lo usa)
@@ -127,15 +148,22 @@ $env:TOTP_ENCRYPTION_KEY=(python -c "from cryptography.fernet import Fernet; pri
 python -m pytest tests -q
 ```
 
-Cobertura actual (13 pruebas):
+Cobertura actual (32 pruebas):
 | # | Prueba | Qué valida |
 |---|---|---|
 | 1-3 | slugify | Normalización de slugs (unitaria) |
 | 4-8 | índice de phishing | Fórmula 25/25/50 y niveles (unitaria) |
 | 9-10 | contraseña temporal | Cumple §5, aleatoria (unitaria) |
-| 11 | **Aislamiento multi-tenant** | Org A → 403 sobre org B (leer/editar/listar); ve la propia con métricas |
-| 12 | `admin_plataforma` lista todas las orgs | Decisión #7 con métricas |
-| 13 | **Invitación de analista completa** | Invite → login → 403 `PASSWORD_CHANGE_REQUIRED` → cambio → acceso; cambio/desactivación de rol; sesión muerta tras desactivar |
+| 11-23 | **validador CSV** | Encabezados, correos, grupos inexistentes, dedupe in-file, BOM, líneas vacías, límites (unitaria) |
+| 24 | **Aislamiento multi-tenant** | Org A → 403 sobre org B (leer/editar/listar); ve la propia con métricas |
+| 25 | `admin_plataforma` lista todas las orgs | Decisión #7 con métricas |
+| 26 | **Invitación de analista completa** | Invite → login → 403 `PASSWORD_CHANGE_REQUIRED` → cambio → acceso; cambio/desactivación de rol; sesión muerta tras desactivar |
+| 27 | **Grupos: flujo completo** | Crear, duplicado 409 case-insensitive, métricas, editar, analista lee pero no escribe |
+| 28 | **Grupos: borrado** | 409 con campañas (RESTRICT) → 204 sin ellas → destinatarios en cascada |
+| 29 | **Grupos: aislamiento** | Org B → 404 sobre grupos de org A |
+| 30 | **Destinatarios: flujo completo** | Alta, 409 CITEXT, filtro por grupo, histórico, edición, desactivación lógica, métricas solo activos |
+| 31 | **Destinatarios: CSV** | Mezcla válidos/duplicados/inválidos con detalle por fila; re-import dedupe; encabezados malos 422 |
+| 32 | **Destinatarios: aislamiento** | Org B → 404 sobre destinatarios de org A; correo repetido entre orgs permitido |
 
 ## 8. Notas de despliegue local
 

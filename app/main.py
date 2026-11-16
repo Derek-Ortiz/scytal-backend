@@ -7,7 +7,9 @@ from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.middlewares.security_headers import SecurityHeadersMiddleware
 from app.routers.auth import router as auth_router
+from app.routers.groups import router as groups_router
 from app.routers.organizations import router as organizations_router
+from app.routers.recipients import router as recipients_router
 from app.routers.users import router as users_router
 from app.schemas.auth import error_payload
 
@@ -29,7 +31,9 @@ def create_app() -> FastAPI:
     # Errores estándar §6.5
     @app.exception_handler(RequestValidationError)
     async def validation_handler(request: Request, exc: RequestValidationError):
-        return JSONResponse(status_code=422, content=error_payload("VALIDATION_ERROR", "Datos inválidos", {"errors": exc.errors()}).model_dump())
+        # exc.errors() puede incluir objetos ValueError en ctx (no serializables): se limpia
+        errores = [{k: v for k, v in e.items() if k != "ctx"} for e in exc.errors()]
+        return JSONResponse(status_code=422, content=error_payload("VALIDATION_ERROR", "Datos inválidos", {"errors": errores}).model_dump())
 
     @app.exception_handler(HTTPException)
     async def http_error_handler(request: Request, exc: HTTPException):
@@ -53,6 +57,8 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(organizations_router)
     app.include_router(users_router)
+    app.include_router(groups_router)
+    app.include_router(recipients_router)
     return app
 
 

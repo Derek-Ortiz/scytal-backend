@@ -149,3 +149,45 @@ Notas:
 - El invitado nuevo debe: login → 2FA enroll/confirm → las rutas de negocio dan `403 PASSWORD_CHANGE_REQUIRED` → `/auth/password/change` → login de nuevo → acceso normal.
 - `correo_enviado: false` en la invitación = el SMTP falló (ver logs); reinvitar generará error de correo duplicado — contactar soporte o desactivar/reinvitar.
 
+---
+
+## 9. `/groups` (nuevo — v1.2)
+
+Gestión de grupos de destinatarios dentro de la organización del token (§6.1). **Lecturas:** `admin_organizacion` + `analista`. **Escrituras:** solo `admin_organizacion`.
+
+| Método | Ruta | Quién | Body / Respuesta |
+|---|---|---|---|
+| POST | `/groups` | `admin_organizacion` | Body `{nombre (1-150), perfil (1-100)}` → 201 `{id_grupos, nombre, perfil, creado_en, metricas: {destinatarios_activos, indice_promedio}}`. Nombre duplicado en la org (sin distinguir mayúsculas) → 409 `DUPLICATE` |
+| GET | `/groups` | ambos roles | → `{total, items: [GrupoDetail], limit, offset}`; cada item incluye `metricas`. `indice_promedio` es `null` si el grupo aún no tiene campañas finalizadas |
+| GET | `/groups/{id}` | ambos roles | Detalle + métricas. Grupo de otra org o inexistente → 404 `NOT_FOUND` |
+| PATCH | `/groups/{id}` | `admin_organizacion` | Body `{nombre?|perfil?}` → grupo actualizado. Sin campos → 422. Nombre duplicado → 409 |
+| DELETE | `/groups/{id}` | `admin_organizacion` | → 204 sin cuerpo. **409 `CONFLICT`** si el grupo tiene campañas asociadas (RESTRICT). Eliminar un grupo elimina en cascada sus destinatarios (no se puede deshacer) |
+
+## 10. `/recipients` (nuevo — v1.2)
+
+Destinatarios (empleados que recibirán las simulaciones). Mismos permisos que `/groups`.
+
+| Método | Ruta | Quién | Body / Respuesta |
+|---|---|---|---|
+| POST | `/recipients` | `admin_organizacion` | Body `{correo, grupo_id}` → 201 `{id_destinatarios, correo (normalizado en minúsculas), grupo_id, activo: true, creado_en}`. El grupo debe existir en TU organización (si no → 404). Correo repetido en la org → 409 `DUPLICATE` |
+| POST | `/recipients/import` | `admin_organizacion` | **multipart/form-data** con campo `file` (CSV, máx 2 MB). Encabezados EXACTOS en la primera línea: `correo,grupo` — grupo por NOMBRE, debe existir en la org → 201 `{total_filas, creados, duplicados, invalidos, errores: ["fila 3: ...", ...]}` (detalle máx 100 filas). **Nunca falla por filas inválidas**: las reporta y crea las válidas. Encabezados incorrectos o archivo vacío → 422 |
+| GET | `/recipients` | ambos roles | → `{total, items: [...], limit, offset}`. Query opcional `?grupo_id=<uuid>` (grupo ajeno → 404). Incluye activos E inactivos (campo `activo: bool`) |
+| GET | `/recipients/{id}` | ambos roles | Detalle + `historico: [{campana_id?, puntaje_phishing (0-100), nivel: "alto"\|"medio"\|"bajo"\|"critico", creado_en}, ...]` (más reciente primero; vacío `[]` si aún no hay campañas) |
+| PATCH | `/recipients/{id}` | `admin_organizacion` | Body `{correo?|grupo_id?}` → destinatario actualizado (404/409 igual que arriba) |
+| PATCH | `/recipients/{id}/deactivate` | `admin_organizacion` | Borrado lógico → `activo: false`. Los datos e histórico se CONSERVAN (no se anonimiza). Ya desactivado → 422 |
+
+Notas CSV (formato exacto esperado):
+
+```csv
+correo,grupo
+juan.perez@empresa.com,Ventas
+ana.lopez@empresa.com,Soporte
+```
+
+- La unicidad del correo es **por organización** (case-insensitive): el mismo correo puede existir en orgs distintas.
+- Un correo desactivado sigue bloqueando su re-creación (único en la org, activo o no) — cuenta como `duplicados` en el CSV.
+- `duplicados` = repetidos dentro del archivo + ya existentes en la org.
+- Formato de correo validado estrictamente (igual que `/auth`); en el CSV una fila con correo inválido NO aborta nada: entra en `invalidos` + `errores`.
+- Límite: 5000 filas por archivo (más → 422).
+
+
