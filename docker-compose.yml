@@ -9,8 +9,8 @@ services:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./squema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      - ./migrations/add_slug.sql:/docker-entrypoint-initdb.d/02-add-slug.sql:ro
+    # El esquema lo crea la API con `alembic upgrade head` (0001 + 0002).
+    # squema.sql y migrations/add_slug.sql se conservan en el repo solo como referencia histórica.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scytal} -d ${POSTGRES_DB:-scytal}"]
       interval: 5s
@@ -42,6 +42,7 @@ services:
       SMTP_HOST: mailhog
     ports:
       - "8000:8000"
+    command: sh -c "alembic upgrade head && python -m seeds.seed_admin && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     depends_on:
       db:
         condition: service_healthy

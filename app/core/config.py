@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     SMTP_HOST: str = "mailhog"
     SMTP_PORT: int = 1025
     SMTP_FROM: str = "no-reply@scytal.local"
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_USE_TLS: bool = False
+    SMTP_RETRY_ATTEMPTS: int = 3
+    SMTP_RETRY_DELAY_SECONDS: int = 2
+    SMTP_BULK_DELAY_SECONDS: int = 1
+    FRONTEND_BASE_URL: str = "http://localhost:3000"
 
     PUBLIC_BASE_URL: str = "http://localhost:8000"
 
