@@ -35,3 +35,8 @@ Thumbs.db
 
 # Docker
 docker-compose.override.yml
+
+
+
+prompt_frontend.md
+squema.sql
