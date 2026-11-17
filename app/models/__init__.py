@@ -7,11 +7,13 @@ from app.models.historial import HistorialContrasenas
 from app.models.instantanea import InstantaneaPhishing
 from app.models.organizacion import Organizacion
 from app.models.plantilla import Plantilla
+from app.models.qr_zona import CampanaQrZona
 from app.models.tracking import EventoTracking
 from app.models.usuario import Usuario
 
 __all__ = [
     "Organizacion", "Usuario", "HistorialContrasenas", "EventoAuditoria",
     "Grupo", "Destinatario", "Plantilla", "Campana", "CampanaCanal",
-    "DestinatarioCampana", "EventoTracking", "Alerta", "InstantaneaPhishing",
+    "DestinatarioCampana", "CampanaQrZona", "EventoTracking", "Alerta",
+    "InstantaneaPhishing",
 ]

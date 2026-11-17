@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -26,6 +26,9 @@ class Campana(Base):
     )
     nombre: Mapped[str] = mapped_column(String(255), nullable=False)
     estado: Mapped[str] = mapped_column(PgEnum(*ESTADO_CAMPANA, name="estado_campana"), nullable=False, default="pendiente")
+    # Horas de vigencia de los tokens decidida por el usuario (decisión: la define el usuario;
+    # editable después del lanzamiento → re-datura expira_en de todas las filas).
+    expiracion_horas: Mapped[int] = mapped_column(Integer, nullable=False, default=72)
     programada_en: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     iniciada_en: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     finalizada_en: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

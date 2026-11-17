@@ -10,6 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends libpq-dev gcc &
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Opción B: renderizado headless para clonar páginas 100% JS (SPA).
+# Chromium + dependencias de sistema de Playwright.
+RUN playwright install --with-deps chromium
+
 COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./alembic.ini

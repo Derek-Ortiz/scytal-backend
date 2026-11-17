@@ -93,6 +93,36 @@ hasta que el invitado use `/auth/password/change` (el login ya trae `requires_pa
 | PATCH | `/recipients/{id}` | `admin_organizacion` | Edita correo y/o grupo |
 | PATCH | `/recipients/{id}/deactivate` | `admin_organizacion` | Borrado lógico: conserva datos e histórico (decisión #9) |
 
+### `/templates` (§4.7 — Fase 3)
+
+| Método | Ruta | Roles | Descripción |
+|---|---|---|---|
+| GET | `/templates` | ambos roles | Globales (`org_id NULL`) + propias; filtros `?perfil=`, `?canal=correo\|qr`; cada item con `en_uso` |
+| POST | `/templates` | `admin_organizacion` | Crea plantilla `{nombre, perfil, canal, asunto?, contenido_html, landing_html}` → 201. **canal=correo exige `asunto` → 422** (§5, en el schema). La landing recibe la leyenda `PÁGINA DE PRUEBA` automática si falta |
+| GET | `/templates/{id}` | ambos roles | Detalle con HTML completo + `en_uso`. Global visible para todas; ajena → 404 |
+| PATCH | `/templates/{id}` | `admin_organizacion` | Edita parcialmente; regla canal⇒asunto con el estado final → 422. Global → 403 |
+| DELETE | `/templates/{id}` | `admin_organizacion` | 204; **409** si la usan campañas pendientes/programadas/activas; global → 403 |
+| POST | `/templates/importar` | `admin_organizacion` | Clona una página de login real por URL (decisión A+B) → 201 plantilla propia. Opción A: descarga estática con guardas SSRF (solo http/https, DNS validado por salto, sin IPs internas/metadata, máx 5 redirects, 2 MB, 10 s). Si el HTML es una carcasa SPA vacía → Opción B: render con Chromium headless (Playwright; si falta → 422). El snapshot queda congelado: scripts/iframes/CSP fuera, URLs absolutizadas, todos los form → `/track/submit`, form mínimo si no hay password, leyenda `PÁGINA DE PRUEBA`. Nombre/asunto autogenerados con el dominio. Errores → 422 `VALIDATION_ERROR` |
+
+### `/campaigns` (§4.8 — Fase 3)
+
+Estados: `pendiente` (= draft) → `activa` → `completada` / `cancelada`. `programada` sin uso (sin ruta de programación).
+
+| Método | Ruta | Roles | Descripción |
+|---|---|---|---|
+| GET | `/campaigns` | ambos roles | Listado con filtros `?estado=`, `?grupo_id=`; incluye canales y zonas QR |
+| POST | `/campaigns` | `admin_organizacion` | Crea en `pendiente` `{nombre, grupo_id, plantilla_id?, expiracion_horas? (default 72)}` → 201 |
+| GET | `/campaigns/{id}` | ambos roles | Detalle con `canales: [{canal, zonas}]`. Ajena → 404 |
+| PATCH | `/campaigns/{id}` | `admin_organizacion` | `pendiente`: todo editable. `activa`: SOLO `expiracion_horas` (re-datura todos los tokens, revive vencidos); resto → **409**. Otros estados → 409 |
+| POST | `/campaigns/{id}/channels` | `admin_organizacion` | Solo en `pendiente`: define `canales` (reemplaza). Si va `qr` exige `zonas` ≥1 → 422. Regenera zonas QR |
+| POST | `/campaigns/{id}/launch` | `admin_organizacion` | `pendiente/completada/cancelada` → `activa`. Exige plantilla, ≥1 canal, zonas si qr, ≥1 destinatario activo (→ 422). Regenera tokens y reinicia contadores (el histórico se conserva). Correos en **background** (send_many_detailed, éxito individual estampa `enviado_en`) |
+| GET | `/campaigns/{id}/qr` | ambos roles | Extensión: render de zonas QR → `[{zona, url, qr_base64}]` (PNG base64). 404 sin zonas |
+| GET | `/campaigns/{id}/stats` | ambos roles | Embudo `{total_destinatarios, enviados, abiertos, clics, subidos}` + `qr_clics` aparte (anónimos, no entran al embudo). Solo cuenta eventos del ciclo actual |
+| GET | `/campaigns/{id}/recipients` | ambos roles | Tabla por destinatario: enviado/abrio/clico/subio, token vencido, puntaje/nivel del último finish |
+| POST | `/campaigns/{id}/finish` | `admin_organizacion` | Solo desde `activa` → `completada`: instantáneas §7 (25/25/50) + 1 alerta por quien envió datos en el formulario falso (el contenido NUNCA se guarda) |
+| POST | `/campaigns/{id}/send-feedback` | `admin_organizacion` | Solo desde `completada`, una sola vez (2ª → **409**); marca `feedback_enviado_en` y envía en background el correo de resultados |
+| POST | `/campaigns/{id}/cancel` | `admin_organizacion` | `pendiente/activa` → `cancelada`; **tokens mueren al instante** (`expira_en = ahora`) |
+
 ## 4. Seguridad implementada
 
 - **Contraseñas**: Argon2id (OWASP), mín. 10 caracteres, zxcvbn ≥ 3, lista local, HIBP (k-anonimato, cache Redis), historial últimas 3, rotación 90 días.
@@ -113,18 +143,19 @@ app/
   deps.py              # get_current_user / get_current_org / get_pending_user / require_roles
   core/                # config, security (Argon2/JWT/Fernet/TOTP), rate_limit, logging
   db/                  # engine async + Base
-  models/              # 12 tablas del dominio (auth + orgs + campañas + tracking + alertas)
-  schemas/             # Pydantic v2 por módulo (auth, organizacion, usuario, grupo, destinatario)
-  routers/             # auth.py, organizations.py, users.py, groups.py, recipients.py
-  services/            # auth, password (zxcvbn+HIBP), hibp, email (reintentos+delay), usuario, organizacion, grupo, destinatario (CSV), maturity (puro)
+  models/              # 13 tablas del dominio (auth + orgs + campañas + zonas QR + tracking + alertas)
+  schemas/             # Pydantic v2 por módulo (auth, organizacion, usuario, grupo, destinatario, plantilla, campana)
+  routers/             # auth.py, organizations.py, users.py, groups.py, recipients.py, templates.py, campaigns.py
+  services/            # auth, password (zxcvbn+HIBP), hibp, email (reintentos+delay+lote detallado), usuario, organizacion, grupo, destinatario (CSV), plantilla (leyenda), campana (launch/cancel/finish/feedback/QR), qr (PNG base64), maturity (puro), clonador (importar plantilla por URL: descarga estática A + render Chromium B, guardas SSRF, HTML domesticado)
   repositories/        # acceso a datos con filtro org_id (§6.1)
   middlewares/         # security_headers (CORS ya en main, cabeceras, request_id)
-alembic/               # 0001 baseline auth + 0002 dominio completo (fuente única del esquema)
-tests/                 # unit/ + integration/ (pytest, 32 pruebas)
+alembic/               # 0001 baseline auth + 0002 dominio + 0003 zonas QR y expiración (fuente única del esquema)
+tests/                 # unit/ + integration/ (pytest, 90 pruebas)
 seeds/seed_admin.py    # admin_plataforma inicial
+seeds/seed_templates.py # 3 plantillas globales (login genérico, clon Facebook, clon Instagram)
 migrations/add_slug.sql # referencia histórica (el sistema ya no lo usa)
 squema.sql             # esquema original de referencia (el sistema ya no lo usa)
-docker-compose.yml     # db + redis + mailhog + api (api corre alembic + seed al arrancar)
+docker-compose.yml     # db + redis + mailhog + api (api corre alembic + seeds al arrancar)
 prompt_frontend.md     # contrato API ↔ frontend (fuente única para el IA del frontend)
 ```
 
@@ -148,7 +179,7 @@ $env:TOTP_ENCRYPTION_KEY=(python -c "from cryptography.fernet import Fernet; pri
 python -m pytest tests -q
 ```
 
-Cobertura actual (32 pruebas):
+Cobertura actual (90 pruebas):
 | # | Prueba | Qué valida |
 |---|---|---|
 | 1-3 | slugify | Normalización de slugs (unitaria) |
@@ -164,11 +195,22 @@ Cobertura actual (32 pruebas):
 | 30 | **Destinatarios: flujo completo** | Alta, 409 CITEXT, filtro por grupo, histórico, edición, desactivación lógica, métricas solo activos |
 | 31 | **Destinatarios: CSV** | Mezcla válidos/duplicados/inválidos con detalle por fila; re-import dedupe; encabezados malos 422 |
 | 32 | **Destinatarios: aislamiento** | Org B → 404 sobre destinatarios de org A; correo repetido entre orgs permitido |
+| 33-41 | **Plantillas y campañas: unitarias** | Leyenda de landing idempotente, render `{{enlace}}`/`{{pixel}}` con y sin marcadores, canal=correo exige asunto, canales QR exigen zonas, PNG QR válido |
+| 42 | **Plantillas: flujo completo** | CRUD, leyenda automática, canal⇒asunto final 422, filtros, global solo lectura, analista, multi-tenant |
+| 43 | **Plantilla global** | org_id NULL la lee cualquier org; PATCH/DELETE → 403 |
+| 44 | **Plantilla en uso** | DELETE → 409 con campaña pendiente; cancelada la suelta (SET NULL) |
+| 45 | **Campañas: flujo completo** | pendiente → canales → launch (tokens únicos + correos en background) → stats en ceros → PATCH activa solo expiración → interacciones simuladas → finish (75/25/100, 1 alerta) → índice del grupo → feedback una vez → relanzado reinicia sin arrastrar el embudo |
+| 46 | **Campañas: QR + cancel + relanzar** | QR sin zonas 422, zonas con trim, render PNG, launch con correo+qr, cancel mata tokens al instante, relanzado revive tokens, cancelar cancelada 409, qr_clics aparte |
+| 47 | **Campañas: permisos** | Analista lee/no escribe; org B → 404; filtros por estado/grupo |
+| 48 | **Campañas: launch exige destinatarios** | Grupo vacío → 422; destinatario desactivado no cuenta |
+| 49-52 | **Importador por URL: unitarias** | Guardas SSRF (`_ip_bloqueada` parametrizada: loopback/privadas/metadata/link-local/multicast/reservadas; IPs públicas fuera), `_url_valida` (solo http/https), detección de carcasa SPA (React/Next vs página real), `procesar_html`: domestica (scripts/iframe/base/CSP/refresh/on*/javascript: fuera), absolutiza contra la URL final (incl. CSS), todo form → `/track/submit`, form mínimo si no hay password, leyenda idempotente, fragmento sin `<body>` |
+| 53-58 | **Importador por URL: integración** | Flujo A con redirect (asunto/nombre autogenerados, correo con `{{enlace}}`, landing domesticada y absolutizada, en el listado), fallback a B con render mockeado, render B real con Chromium local (skip si no está), errores 422 (500, no-HTML, >2 MB, ftp, canal inválido), SSRF real bloqueado (127.0.0.1/localhost/169.254.169.254/192.168.x), permisos (analista 403, sin token 401) |
 
 ## 8. Notas de despliegue local
 
 - Si tu entorno Windows resuelve mal `localhost` (DNS falla con `getaddrinfo failed`), usa `127.0.0.1` en `DATABASE_URL`/`REDIS_URL` del `.env` local; dentro de Docker Compose, los nombres de servicio son `db`/`redis` (ya están fijados en `docker-compose.yml`).
 - Verifica el contenido de `.env` tras editarlo; si aparece el texto de `.env.example`, regrábalo.
+- **Importador por URL (Opción B):** el Dockerfile instala Chromium vía `RUN playwright install --with-deps chromium` (primera build más lenta y ~500 MB más de imagen, aceptado en decisión). Sin ese paso, las páginas 100% JS responden 422 con mensaje claro.
 
 ## 9. Prompt para conectar con el frontend
 

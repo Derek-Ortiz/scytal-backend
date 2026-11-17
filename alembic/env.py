@@ -16,6 +16,7 @@ from app.models.historial import HistorialContrasenas  # noqa: F401
 from app.models.instantanea import InstantaneaPhishing  # noqa: F401
 from app.models.organizacion import Organizacion  # noqa: F401
 from app.models.plantilla import Plantilla  # noqa: F401
+from app.models.qr_zona import CampanaQrZona  # noqa: F401
 from app.models.tracking import EventoTracking  # noqa: F401
 from app.models.usuario import Usuario  # noqa: F401
 

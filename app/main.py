@@ -7,9 +7,11 @@ from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.middlewares.security_headers import SecurityHeadersMiddleware
 from app.routers.auth import router as auth_router
+from app.routers.campaigns import router as campaigns_router
 from app.routers.groups import router as groups_router
 from app.routers.organizations import router as organizations_router
 from app.routers.recipients import router as recipients_router
+from app.routers.templates import router as templates_router
 from app.routers.users import router as users_router
 from app.schemas.auth import error_payload
 
@@ -18,7 +20,7 @@ setup_logging()
 
 def create_app() -> FastAPI:
     s = get_settings()
-    app = FastAPI(title="Scytal — Backend", version="1.1.0")
+    app = FastAPI(title="Scytal — Backend", version="1.2.0")
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -59,6 +61,8 @@ def create_app() -> FastAPI:
     app.include_router(users_router)
     app.include_router(groups_router)
     app.include_router(recipients_router)
+    app.include_router(templates_router)
+    app.include_router(campaigns_router)
     return app
 
 

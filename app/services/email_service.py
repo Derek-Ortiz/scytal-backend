@@ -71,3 +71,20 @@ async def send_many(
         else:
             fallos += 1
     return ok, fallos
+
+
+async def send_many_detailed(
+    items: list[tuple[str, str, str, str | None]], *, request_id: str | None = None
+) -> list[bool]:
+    """Como send_many pero retorna el resultado INDIVIDUAL de cada correo ([True/False por ítem]).
+
+    Lo usa el despacho de campañas: cada éxito estampa enviado_en de su propia fila de token,
+    así un fallo de SMTP no marca como enviados los correos que sí salieron.
+    """
+    s = get_settings()
+    resultados: list[bool] = []
+    for i, (to, asunto, texto, html) in enumerate(items):
+        if i > 0 and s.SMTP_BULK_DELAY_SECONDS > 0:
+            await asyncio.sleep(s.SMTP_BULK_DELAY_SECONDS)
+        resultados.append(await send_email(to, asunto, texto, html, request_id=request_id))
+    return resultados
