@@ -89,7 +89,8 @@ def generate_totp_secret() -> str:
 
 
 def totp_provisioning_uri(secret: str, account: str, issuer: str = "Scytal") -> str:
-    return pyotp.totp.TOTP(secret).provisioning_uri(account, issuer_name=issuer)
+    # name= e issuer_name= como keywords: pyotp>=2.12 hace keyword-only el método
+    return pyotp.totp.TOTP(secret).provisioning_uri(name=account, issuer_name=issuer)
 
 
 def get_fernet() -> Fernet | None:
