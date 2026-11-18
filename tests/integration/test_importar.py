@@ -39,12 +39,20 @@ RENDERIZADO = (
 )
 
 
+CSS_PORTAL = ".portal{color:#123}\nbody{background:url(/img/fondo-portal.png)}"
+CSS_APP = ".spa{color:#456}"
+
+
 def _transporte() -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/redirige":
             return httpx.Response(302, headers={"location": "/login"})
         if request.url.path == "/login":
             return httpx.Response(200, headers={"content-type": "text/html; charset=utf-8"}, text=PAGINA)
+        if request.url.path == "/css/portal.css":
+            return httpx.Response(200, headers={"content-type": "text/css"}, text=CSS_PORTAL)
+        if request.url.path == "/css/app.css":
+            return httpx.Response(200, headers={"content-type": "text/css"}, text=CSS_APP)
         if request.url.path == "/spa":
             return httpx.Response(200, headers={"content-type": "text/html"}, text=SHELL_SPA)
         if request.url.path == "/muere":
@@ -88,14 +96,19 @@ async def test_importar_flujo_estatico_con_redirect(client, integration_guard, r
     assert p["contenido_html"].startswith("<div") and "{{enlace}}" in p["contenido_html"]
 
     landing = p["landing_html"]
-    assert "PÁGINA DE PRUEBA" in landing                     # leyenda obligatoria
-    assert 'action="/track/submit"' in landing              # form capturado
+    assert 'action="/track/submit"' in landing               # form capturado
     assert 'method="post"' in landing
-    assert "<script" not in landing                         # snapshot sin vida
+    assert "<script" not in landing                          # snapshot sin vida
     assert "onerror" not in landing
     assert 'src="https://portal.falso.com/img/logo.png"' in landing   # absolutizado
-    assert 'href="https://portal.falso.com/css/portal.css"' in landing
-    assert "integrity" not in landing                       # integridad soltada
+    assert "integrity" not in landing                        # integridad soltada
+    # snapshot AUTOCONTENIDO: el CSS de /css/portal.css queda inline (sin <link>)
+    assert "<link" not in landing
+    assert "<style" in landing and "data-fuente" in landing
+    assert ".portal{color:#123}" in landing                  # contenido del CSS
+    assert "https://portal.falso.com/img/fondo-portal.png" in landing  # url() absolutizada
+    # leyenda DESACTIVADA temporalmente en imports (validación de frontend)
+    assert "PÁGINA DE PRUEBA" not in landing
 
     # en_uso False y visible en el listado
     r = await client.get("/templates", headers=headers)
@@ -123,8 +136,10 @@ async def test_importar_fallback_render_b(client, integration_guard, red_falsa, 
     assert llamadas == ["https://spa.falso.com/spa"]  # B recibió la URL final
     landing = r.json()["landing_html"]
     assert 'action="/track/submit"' in landing           # form del DOM renderizado capturado
-    assert "PÁGINA DE PRUEBA" in landing
     assert "<script" not in landing
+    assert "<link" not in landing                        # CSS del DOM renderizado inline
+    assert ".spa{color:#456}" in landing
+    assert "PÁGINA DE PRUEBA" not in landing
 
 
 @pytest.mark.asyncio
@@ -190,4 +205,66 @@ async def test_importar_permisos(client, integration_guard):
     })
     assert r.status_code == 403
     r = await client.post("/templates/importar", json={"url": "https://x.falso.com/login"})
+    assert r.status_code == 401
+
+
+# ---- GET /templates/{id}/previsualizar + GET /previsualizar/{token} ----
+
+@pytest.mark.asyncio
+async def test_previsualizacion_flujo_completo(client, integration_guard, red_falsa):
+    """Enlace efímero: se obtiene con sesión y se abre SIN cabeceras (como el destinatario)."""
+    reg, tok = await _org_con_token(client, "prev")
+    headers = {"Authorization": f"Bearer {tok}"}
+    r = await client.post("/templates/importar", headers=headers, json={
+        "url": "https://portal.falso.com/redirige", "nombre": "Prev test",
+    })
+    pid = r.json()["id_plantillas"]
+
+    r = await client.get(f"/templates/{pid}/previsualizar", headers=headers)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["expira_en_minutos"] == 30
+    assert "/previsualizar/" in data["url"]
+
+    # la URL se abre sin autenticación: es lo que verá el destinatario
+    r2 = await client.get(data["url"])
+    assert r2.status_code == 200
+    assert r2.headers["content-type"].startswith("text/html")
+    assert r2.headers["cache-control"] == "no-store"
+    assert 'action="/track/submit"' in r2.text
+    assert ".portal{color:#123}" in r2.text                      # CSS inline servido
+    csp = r2.headers["content-security-policy"]
+    assert "style-src 'unsafe-inline' https:" in csp             # estilos inline permitidos
+    assert "script-src" not in csp and "default-src 'none'" in csp  # JS bloqueado
+
+    # token falso → 404 | token vencido → 404
+    r3 = await client.get("/previsualizar/token-falso")
+    assert r3.status_code == 404
+    from app.core.security import create_preview_token
+    vencido = create_preview_token(pid, reg["org_id"], minutos=-1)
+    r4 = await client.get(f"/previsualizar/{vencido}")
+    assert r4.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_previsualizacion_permisos(client, integration_guard):
+    """El analista puede generar el enlace; otra org NO puede mintearlo para una plantilla ajena."""
+    from tests.integration.test_templates import _crear_plantilla
+
+    reg, tok = await _org_con_token(client, "prevp")
+    _, tok_analista = await _crear_analista(client, reg["org_id"])
+    p = await _crear_plantilla(client, tok, nombre="Prev permisos")
+    pid = p["id_plantillas"]
+
+    r = await client.get(f"/templates/{pid}/previsualizar",
+                         headers={"Authorization": f"Bearer {tok_analista}"})
+    assert r.status_code == 200
+
+    # org B (otra organización): plantilla ajena → 404 al mintear
+    reg_b, tok_b = await _org_con_token(client, "prevq")
+    r = await client.get(f"/templates/{pid}/previsualizar",
+                         headers={"Authorization": f"Bearer {tok_b}"})
+    assert r.status_code == 404
+    # sin sesión → 401
+    r = await client.get(f"/templates/{pid}/previsualizar")
     assert r.status_code == 401

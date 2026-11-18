@@ -10,11 +10,15 @@ Flujo de `importar_url`:
    instalado → 422 con mensaje claro.
 3. `procesar_html` (PURO, testeado sin BD) "domestica" el HTML:
    - elimina <script>/<iframe>/<base>/meta CSP y refresh, atributos on* y javascript:;
-   - absolutiza src/hrelativos contra la URL final;
+   - absolutiza src/href/srcset contra la URL final;
    - TODO <form> queda action="/track/submit" method="post" (nunca postea al sitio real);
      el token por destinatario lo añadirá /track al servir la página (Fase 4);
    - si no hay <form> con <input type="password">, inyecta uno mínimo;
-   - garantiza la leyenda "PÁGINA DE PRUEBA" (reusa plantilla_service).
+   - leyenda "PÁGINA DE PRUEBA" SOLO con leyenda=True (en imports está DESACTIVADA
+     temporalmente para validar la previsualización del frontend).
+4. `inlinar_css` baja cada <link rel=stylesheet> con las mismas guardas SSRF y lo inserta
+   como <style data-fuente=...>: snapshot AUTOCONTENIDO → la previsualización (y /track)
+   se ve idéntica aunque el entorno bloquee CSS externo (p. ej. el bundle de Meta ~1.1 MB).
    El resultado se guarda como `landing_html` de una plantilla normal: NO hay scraping en
    el momento del clic (snapshot congelado en la importación).
 """
@@ -32,11 +36,20 @@ from bs4 import BeautifulSoup
 from app.core.logging import log_event
 from app.services.plantilla_service import aplicar_leyenda
 
-MAX_TAMANO = 2_000_000          # 2 MB: una landing no necesita más (anti-DoS)
+MAX_TAMANO = 2_000_000          # HTML de la página (Opción A): una landing no necesita más
 MAX_REDIRECTS = 5
+MAX_CSS_POR_HOJA = 1_500_000    # hoja CSS individual (el bundle de Meta pesa ~1.1 MB)
+MAX_CSS_TOTAL = 2_000_000       # presupuesto acumulado de CSS inline
+MAX_SNAPSHOT = 3_000_000        # landing final tras inlinear → 422 si se pasa
+MAX_IMPORT_CSS = 2              # profundidad máxima de @import anidados
 TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 TIMEOUT_NAVEGADOR_MS = 20_000   # B: Chromium tarda más (SPA con red)
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ScytalTemplateImport/1.0)"}
+# UA de Chrome real: muchos sitios (Instagram, banks) sirven variantes pobres a UA desconocidos
+UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+HEADERS = {"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"}
 ACCION_FORM = "/track/submit"   # marcador fijo; /track añade ?t={token} al servir (Fase 4)
 
 
@@ -203,6 +216,20 @@ def _absolutizar(soup: BeautifulSoup, base_url: str) -> None:
                 ("http://", "https://", "#", "mailto:", "tel:", "data:", "/track/")
             ):
                 tag[attr] = urljoin(base_url, valor.strip())
+        # srcset: cada candidato "url descriptor" se absolutiza por separado
+        for attr in ("srcset", "data-srcset"):
+            valor = tag.get(attr)
+            if isinstance(valor, str) and valor.strip():
+                candidatos = []
+                for parte in valor.split(","):
+                    parte = parte.strip()
+                    if not parte:
+                        continue
+                    trozos = parte.split()
+                    trozos[0] = urljoin(base_url, trozos[0])
+                    candidatos.append(" ".join(trozos))
+                if candidatos:
+                    tag[attr] = ", ".join(candidatos)
         style = tag.get("style")
         if isinstance(style, str) and "url(" in style:
             tag["style"] = re.sub(r"url\((['\"]?)([^'\")]+)\1\)", lambda m: f"url({urljoin(base_url, m.group(2))})", style)
@@ -253,14 +280,97 @@ FORM_MINIMO = (
 )
 
 
-def procesar_html(html: str, base_url: str) -> str:
+# ---- Inlining de CSS: snapshot autocontenido (la previsualización se ve idéntica) ----
+
+# @import url("x.css")  |  @import "x.css"  (con media query opcional antes del ;)
+RE_IMPORT = re.compile(
+    r"@import\s+(?:url\(\s*['\"]?([^'\")]+)['\"]?\s*\)|['\"]([^'\"]+)['\"])\s*[^;]*;", re.I
+)
+RE_URL_CSS = re.compile(r"url\((['\"]?)([^'\")]+)\1\)")
+
+
+def _css_a_absoluto(css: str, css_url: str) -> str:
+    """Absolutiza url() del CSS contra la URL de la HOJA (no de la página). PURO."""
+    def _fix(m: re.Match) -> str:
+        destino = m.group(2).strip()
+        if destino.startswith(("data:", "#", "http://", "https:", "//")):
+            return m.group(0)
+        return f"url({m.group(1)}{urljoin(css_url, destino)}{m.group(1)})"
+    return RE_URL_CSS.sub(_fix, css)
+
+
+async def _traer_hoja(url: str, c: httpx.AsyncClient, profundidad: int = 0) -> Optional[str]:
+    """Baja una hoja CSS con guardas SSRF, resuelve @import y absolutiza url(). None si no inlineable."""
+    await _validar_url(url)
+    try:
+        resp = await c.get(url)
+    except httpx.HTTPError:
+        return None
+    if resp.is_redirect:
+        return None  # sin Location manejado aquí: los CDN de CSS rara vez redirigen
+    tipo = resp.headers.get("content-type", "")
+    if resp.status_code >= 400 or "text/css" not in tipo or len(resp.content) > MAX_CSS_POR_HOJA:
+        return None
+    css = resp.text
+    if "</style" in css.lower():
+        return None  # el contenido rompería el HTML al insertarlo en <style>
+    # @import anidados: cada hoja importada se baja y absolutiza contra SU propia URL
+    if profundidad < MAX_IMPORT_CSS and RE_IMPORT.search(css):
+        partes: list[str] = []
+        ultimo = 0
+        for m in RE_IMPORT.finditer(css):
+            partes.append(css[ultimo:m.start()])
+            destino = (m.group(1) or m.group(2)).strip()
+            sub = await _traer_hoja(urljoin(url, destino), c, profundidad + 1)
+            partes.append(sub if sub is not None else m.group(0))
+            ultimo = m.end()
+        partes.append(css[ultimo:])
+        css = "".join(partes)
+    return _css_a_absoluto(css, url)
+
+
+async def inlinar_css(html: str, base_url: str) -> str:
+    """Inserta las hojas <link rel=stylesheet> como <style data-fuente=...> (snapshot autocontenido).
+
+    Las previsualizaciones (iframe del frontend con CSP propia) y los clics reales ven
+    EXACTAMENTE lo mismo sin depender de CDNs. Si una hoja no se puede bajar (403, no-CSS,
+    demasiado grande) se conserva su <link>: degradación elegante, el import nunca falla
+    por una hoja de estilos.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    presupuesto = MAX_CSS_TOTAL
+    async with _cliente() as c:
+        for link in list(soup.find_all("link")):
+            rel = link.get("rel") or []
+            rel = " ".join(rel) if isinstance(rel, list) else str(rel)
+            if "stylesheet" not in rel.lower():
+                continue
+            href = link.get("href")
+            if not isinstance(href, str) or not href.strip() or presupuesto <= 0:
+                continue
+            css = await _traer_hoja(urljoin(base_url, href.strip()), c)
+            if css is None:
+                continue
+            if len(css) > presupuesto:
+                continue  # no cabe en el presupuesto restante → conserva su <link>
+            presupuesto -= len(css)
+            style = soup.new_tag("style")
+            style["data-fuente"] = href.strip()
+            style.string = css
+            link.replace_with(style)
+    return str(soup)
+
+
+def procesar_html(html: str, base_url: str, leyenda: bool = False) -> str:
     """Convierte el HTML crudo (A o B) en una landing segura y funcional de Scytal. PURO.
 
     - absolutiza recursos contra `base_url` (la URL FINAL tras redirects),
     - domestica scripts/iframes/CSP/refresh/on*,
     - todos los forms → /track/submit; si ninguno pide contraseña, inyecta uno mínimo
       (los marcadores de posición nunca apuntan al sitio real),
-    - garantiza la leyenda "PÁGINA DE PRUEBA".
+    - la leyenda "PÁGINA DE PRUEBA" SOLO con leyenda=True: los imports la llevan
+      DESACTIVADA temporalmente para validar la previsualización del frontend
+      (las plantillas creadas a mano siguen recibiendo la leyenda en plantilla_service).
     """
     soup = BeautifulSoup(html, "html.parser")
     if soup.find("body") is None:
@@ -272,8 +382,9 @@ def procesar_html(html: str, base_url: str) -> str:
         envoltorio = BeautifulSoup(FORM_MINIMO.format(accion=ACCION_FORM), "html.parser")
         body.insert(0, envoltorio)
 
-    # leyenda obligatoria (reusa plantilla_service)
-    return aplicar_leyenda(str(soup))
+    if leyenda:
+        return aplicar_leyenda(str(soup))
+    return str(soup)
 
 
 def _dominio(url: str) -> str:
@@ -299,7 +410,7 @@ async def importar_url(
     nombre: Optional[str], perfil: str, canal: str, asunto: Optional[str],
     actor, request_id: str,
 ):
-    """Descarga (A), renderiza si hace falta (B), procesa y guarda la plantilla."""
+    """Descarga (A), renderiza si hace falta (B), domestica, inlinea CSS y guarda."""
     from app.repositories import plantilla_repository as plantilla_repo
     from app.repositories import usuario_repository as user_repo
 
@@ -310,7 +421,10 @@ async def importar_url(
     if necesita_render(html):
         log_event("template_import_render", url=url_final)
         html = await renderizar_con_navegador(url_final)
-    landing = procesar_html(html, url_final)
+    landing = procesar_html(html, url_final)   # sin leyenda por ahora (validación de frontend)
+    landing = await inlinar_css(landing, url_final)
+    if len(landing.encode("utf-8")) > MAX_SNAPSHOT:
+        raise ValueError(f"la landing resultante pesa más de {MAX_SNAPSHOT // 1_000_000} MB")
 
     nombre_final = (nombre or f"Import {dominio}").strip()
     asunto_final = asunto or f"Verificación de seguridad de {dominio}"

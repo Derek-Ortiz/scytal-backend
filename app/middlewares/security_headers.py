@@ -17,6 +17,19 @@ CSP_DOCS = (
     "connect-src 'self'; "
     "frame-ancestors 'none'"
 )
+# /previsualizar: landing domesticada (snapshot SIN scripts, CSS inline). Se permiten
+# estilos inline y recursos https (por si quedó un <link> que no se pudo inlinear),
+# pero JavaScript queda bloqueado por defecto-src 'none' sin script-src.
+RUTA_PREVISUALIZAR = "/previsualizar/"
+CSP_PREVISUALIZACION = (
+    "default-src 'none'; "
+    "style-src 'unsafe-inline' https:; "
+    "img-src https: data:; "
+    "font-src https: data:; "
+    "media-src https:; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'"
+)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -27,7 +40,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        csp = CSP_DOCS if request.url.path.startswith(RUTAS_DOCS) else CSP_API
+        csp = CSP_API
+        if request.url.path.startswith(RUTAS_DOCS):
+            csp = CSP_DOCS
+        elif request.url.path.startswith(RUTA_PREVISUALIZAR):
+            csp = CSP_PREVISUALIZACION
         response.headers["Content-Security-Policy"] = csp
         response.headers["Referrer-Policy"] = "no-referrer"
         if request.url.scheme == "https":

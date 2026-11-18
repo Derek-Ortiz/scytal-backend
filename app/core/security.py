@@ -78,6 +78,19 @@ def create_pending_token(user_id: str, org_id: str | None, rol: str) -> str:
     )
 
 
+def create_preview_token(plantilla_id: str, org_id: str, minutos: int = 30) -> str:
+    """JWT efímero SOLO para abrir la landing en el navegador (GET /previsualizar/{token}).
+
+    No es un token de sesión: tipo='previsualizacion', sin rol ni version_token, y la ruta
+    pública valida ambos claims antes de servir el HTML.
+    """
+    s = get_settings()
+    return jwt.encode(
+        _payload(plantilla_id, "previsualizacion", {"org_id": org_id}, timedelta(minutes=minutos)),
+        s.JWT_SECRET, algorithm=s.JWT_ALGORITHM,
+    )
+
+
 def decode_token(token: str) -> dict:
     s = get_settings()
     return jwt.decode(token, s.JWT_SECRET, algorithms=[s.JWT_ALGORITHM])

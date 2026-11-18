@@ -74,6 +74,14 @@ class PlantillaImportarRequest(BaseModel):
     _v_canal = field_validator("canal")(_valid_canal)
 
 
+class PlantillaPreviewResponse(BaseModel):
+    """GET /templates/{id}/previsualizar: enlace efímero (JWT 30 min) con la landing EXACTA
+    que verá el destinatario; se abre directo en el navegador."""
+
+    url: str
+    expira_en_minutos: int
+
+
 class PlantillaResponse(BaseModel):
     id_plantillas: uuid.UUID
     org_id: Optional[uuid.UUID] = None  # None = plantilla global (visible para todas las orgs)

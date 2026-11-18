@@ -111,8 +111,15 @@ def test_forms_apuntan_a_track_submit(procesada):
     assert 'action="/signin"' not in procesada
 
 
-def test_leyenda_obligatoria(procesada):
-    assert "PÁGINA DE PRUEBA" in procesada
+def test_leyenda_con_leyenda_true():
+    out = cs.procesar_html(PAGINA, "https://original.com/login", leyenda=True)
+    assert "PÁGINA DE PRUEBA" in out
+
+
+def test_imports_sin_leyenda_por_ahora():
+    # temporal: la leyenda está desactivada en imports para validar la previsualización
+    out = cs.procesar_html(PAGINA, "https://original.com/login")
+    assert "PÁGINA DE PRUEBA" not in out
 
 
 def test_inyecta_form_minimo_si_no_hay_password():
@@ -124,14 +131,22 @@ def test_inyecta_form_minimo_si_no_hay_password():
 
 def test_no_duplica_leyenda_si_la_trae():
     html = "<html><body><p>página de prueba</p><form><input type='password'></form></body></html>"
-    out = cs.procesar_html(html, "https://x.com/")
+    out = cs.procesar_html(html, "https://x.com/", leyenda=True)
     total = out.lower().count("página de prueba")
     assert total == 1  # case-insensitive: no se añade una segunda
 
 
 def test_fragmento_sin_body_no_explota():
-    out = cs.procesar_html("<p>hola <script>malo()</script></p>", "https://x.com/")
+    out = cs.procesar_html("<p>hola <script>malo()</script></p>", "https://x.com/", leyenda=True)
     assert "<script" not in out and "PÁGINA DE PRUEBA" in out
+
+
+def test_absolutiza_srcset():
+    html = ('<html><body><img srcset="/img/a.png 1x, /img/b.png 2x" '
+            'data-srcset="/img/c.png 1x, https://cdn.com/d.png 2x"></body></html>')
+    out = cs.procesar_html(html, "https://x.com/pag")
+    assert "https://x.com/img/a.png 1x" in out and "https://x.com/img/b.png 2x" in out
+    assert "https://x.com/img/c.png 1x" in out and "https://cdn.com/d.png 2x" in out
 
 
 # ---- Asunto/contenido generados para la plantilla importada ----
@@ -143,3 +158,103 @@ def test_dominio_de_url():
 def test_marcadores_del_correo_importado():
     # el cuerpo de correo generado debe traer {{enlace}} y {{pixel}}
     assert "{{enlace}}" in cs.CONTENIDO_IMPORTADO and "{{pixel}}" in cs.CONTENIDO_IMPORTADO
+
+
+# ---- inlinar_css: snapshot autocontenido (red simulada, sin BD) ----
+
+def _red_css(monkeypatch, hojas: dict, tipo: str = "text/css"):
+    """MockTransport para las hojas CSS + resolver DNS falso (IP pública, sin red real)."""
+    import httpx
+
+    async def _ips_publicas(host: str) -> list[str]:
+        return ["93.184.216.34"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path in hojas:
+            return httpx.Response(200, headers={"content-type": tipo}, text=hojas[request.url.path])
+        return httpx.Response(404, headers={"content-type": "text/plain"}, text="nope")
+
+    monkeypatch.setattr(cs, "_ips_de_host", _ips_publicas)
+    monkeypatch.setattr(
+        cs, "_cliente",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=False, timeout=5),
+    )
+
+
+@pytest.mark.asyncio
+async def test_inlinea_hoja_externa(monkeypatch):
+    _red_css(monkeypatch, {"/css/estilos.css": "body{background:url(/img/f.png)}"})
+    html = '<html><head><link rel="stylesheet" href="/css/estilos.css"></head><body><p>x</p></body></html>'
+    out = await cs.inlinar_css(html, "https://x.com/pag")
+    assert "<link" not in out
+    assert "<style" in out and "data-fuente" in out
+    assert "https://x.com/img/f.png" in out   # url() absolutizada contra la HOJA
+
+
+@pytest.mark.asyncio
+async def test_import_anidado_absolutiza_contra_su_propia_hoja(monkeypatch):
+    _red_css(monkeypatch, {
+        "/css/main.css": '@import "tema.css";',
+        "/css/tema.css": ".logo{background:url(logo.png)}",
+    })
+    html = '<html><head><link rel="stylesheet" href="/css/main.css"></head><body></body></html>'
+    out = await cs.inlinar_css(html, "https://x.com/")
+    assert "<link" not in out and "@import" not in out
+    assert "https://x.com/css/logo.png" in out  # url() del @import contra /css/tema.css
+
+
+@pytest.mark.asyncio
+async def test_hoja_404_conserva_link(monkeypatch):
+    _red_css(monkeypatch, {})
+    html = '<html><head><link rel="stylesheet" href="/css/falta.css"></head><body></body></html>'
+    out = await cs.inlinar_css(html, "https://x.com/")
+    assert "/css/falta.css" in out
+    assert "<style" not in out
+
+
+@pytest.mark.asyncio
+async def test_hoja_no_css_conserva_link(monkeypatch):
+    _red_css(monkeypatch, {"/css/x.css": "{}"}, tipo="application/json")
+    html = '<html><head><link rel="stylesheet" href="/css/x.css"></head><body></body></html>'
+    out = await cs.inlinar_css(html, "https://x.com/")
+    assert "<style" not in out and "/css/x.css" in out
+
+
+@pytest.mark.asyncio
+async def test_hoja_con_style_cerrado_no_se_inlinea(monkeypatch):
+    # "</style>" dentro del CSS rompería el HTML: se conserva el <link>
+    _red_css(monkeypatch, {"/css/malvado.css": ".a{}</style><script>robo()</script>"})
+    html = '<html><head><link rel="stylesheet" href="/css/malvado.css"></head><body></body></html>'
+    out = await cs.inlinar_css(html, "https://x.com/")
+    assert "<style" not in out and "/css/malvado.css" in out
+
+
+@pytest.mark.asyncio
+async def test_hoja_demasiado_grande_conserva_link(monkeypatch):
+    grande = "a{" + "0" * (cs.MAX_CSS_POR_HOJA + 10) + "}"
+    _red_css(monkeypatch, {"/css/grande.css": grande})
+    html = '<html><head><link rel="stylesheet" href="/css/grande.css"></head><body></body></html>'
+    out = await cs.inlinar_css(html, "https://x.com/")
+    assert "<style" not in out and "/css/grande.css" in out
+
+
+@pytest.mark.asyncio
+async def test_presupuesto_total_de_css(monkeypatch):
+    # la hoja A llena el límite por hoja; a B (500,001 bytes) le quedan solo 500,000 → link
+    grande = "a{" + "0" * (cs.MAX_CSS_POR_HOJA - 3) + "}"
+    media = "b{" + "0" * 499_998 + "}"
+    _red_css(monkeypatch, {"/css/a.css": grande, "/css/b.css": media})
+    html = ('<html><head><link rel="stylesheet" href="/css/a.css">'
+            '<link rel="stylesheet" href="/css/b.css"></head><body></body></html>')
+    out = await cs.inlinar_css(html, "https://x.com/")
+    assert out.count("<style") == 1
+    assert media not in out and "/css/b.css" in out
+
+
+def test_css_a_absoluto_puro():
+    css = ".a{background:url(logo.png)} .b{background:url(https://cdn.com/x.png)}"
+    out = cs._css_a_absoluto(css, "https://x.com/css/tema.css")
+    assert "url(https://x.com/css/logo.png)" in out          # relativa → contra la hoja
+    assert "url(https://cdn.com/x.png)" in out               # absoluta → intacta
+    assert cs._css_a_absoluto(".c{mask:url(data:image/png;base64,AA)}", "https://x.com/") == \
+        ".c{mask:url(data:image/png;base64,AA)}"             # data: intacta

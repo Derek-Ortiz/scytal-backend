@@ -102,7 +102,16 @@ hasta que el invitado use `/auth/password/change` (el login ya trae `requires_pa
 | GET | `/templates/{id}` | ambos roles | Detalle con HTML completo + `en_uso`. Global visible para todas; ajena → 404 |
 | PATCH | `/templates/{id}` | `admin_organizacion` | Edita parcialmente; regla canal⇒asunto con el estado final → 422. Global → 403 |
 | DELETE | `/templates/{id}` | `admin_organizacion` | 204; **409** si la usan campañas pendientes/programadas/activas; global → 403 |
-| POST | `/templates/importar` | `admin_organizacion` | Clona una página de login real por URL (decisión A+B) → 201 plantilla propia. Opción A: descarga estática con guardas SSRF (solo http/https, DNS validado por salto, sin IPs internas/metadata, máx 5 redirects, 2 MB, 10 s). Si el HTML es una carcasa SPA vacía → Opción B: render con Chromium headless (Playwright; si falta → 422). El snapshot queda congelado: scripts/iframes/CSP fuera, URLs absolutizadas, todos los form → `/track/submit`, form mínimo si no hay password, leyenda `PÁGINA DE PRUEBA`. Nombre/asunto autogenerados con el dominio. Errores → 422 `VALIDATION_ERROR` |
+| GET | `/templates/{id}/previsualizar` | ambos roles | → `{url, expira_en_minutos}`. Enlace efímero (JWT 30 min, tipo `previsualizacion`) que sirve la landing EXACTA que verá el destinatario. Ajena → 404 |
+| POST | `/templates/importar` | `admin_organizacion` | Clona una página de login real por URL (decisión A+B) → 201 plantilla propia. Opción A: descarga estática con guardas SSRF (solo http/https, DNS validado por salto, sin IPs internas/metadata, máx 5 redirects, 2 MB, 10 s, UA de Chrome). Si el HTML es una carcasa SPA vacía → Opción B: render con Chromium headless (Playwright; si falta → 422). **Snapshot autocontenido**: scripts/iframes/CSP fuera, URLs absolutizadas, todo form → `/track/submit`, form mínimo si no hay password, y TODO el CSS externo se inlinea como `<style data-fuente>` (≤1.5 MB/hoja, ≤2 MB total, landing final ≤3 MB; hoja que falle/exceda conserva su `<link>`). Nombre/asunto autogenerados con el dominio. Errores → 422 `VALIDATION_ERROR` |
+
+### `/previsualizar` (extensión del clonador)
+
+| Método | Ruta | Auth | Descripción |
+|---|---|---|---|
+| GET | `/previsualizar/{token}` | Público con JWT efímero | Sirve la landing congelada como página real (`text/html`, `Cache-Control: no-store`). El token solo se obtiene de `/templates/{id}/previsualizar`, expira en 30 min y solo abre ESA plantilla de ESA org. CSP sin JavaScript (estilos inline + https; el snapshot ya es autocontenido) |
+
+**Nota temporal:** la leyenda `PÁGINA DE PRUEBA` está DESACTIVADA en las plantillas importadas (se quita para validar la previsualización del frontend); las plantillas creadas a mano siguen recibiéndola. Reactivar el parámetro `leyenda` de `procesar_html` cuando se apruebe.
 
 ### `/campaigns` (§4.8 — Fase 3)
 
@@ -145,12 +154,12 @@ app/
   db/                  # engine async + Base
   models/              # 13 tablas del dominio (auth + orgs + campañas + zonas QR + tracking + alertas)
   schemas/             # Pydantic v2 por módulo (auth, organizacion, usuario, grupo, destinatario, plantilla, campana)
-  routers/             # auth.py, organizations.py, users.py, groups.py, recipients.py, templates.py, campaigns.py
-  services/            # auth, password (zxcvbn+HIBP), hibp, email (reintentos+delay+lote detallado), usuario, organizacion, grupo, destinatario (CSV), plantilla (leyenda), campana (launch/cancel/finish/feedback/QR), qr (PNG base64), maturity (puro), clonador (importar plantilla por URL: descarga estática A + render Chromium B, guardas SSRF, HTML domesticado)
+  routers/             # auth.py, organizations.py, users.py, groups.py, recipients.py, templates.py, campaigns.py, previsualizar.py
+  services/            # auth, password (zxcvbn+HIBP), hibp, email (reintentos+delay+lote detallado), usuario, organizacion, grupo, destinatario (CSV), plantilla (leyenda), campana (launch/cancel/finish/feedback/QR), qr (PNG base64), maturity (puro), clonador (importar plantilla por URL: descarga estática A + render Chromium B, guardas SSRF, HTML domesticado, CSS inlineado = snapshot autocontenido)
   repositories/        # acceso a datos con filtro org_id (§6.1)
   middlewares/         # security_headers (CORS ya en main, cabeceras, request_id)
 alembic/               # 0001 baseline auth + 0002 dominio + 0003 zonas QR y expiración (fuente única del esquema)
-tests/                 # unit/ + integration/ (pytest, 90 pruebas)
+tests/                 # unit/ + integration/ (pytest, 102 pruebas)
 seeds/seed_admin.py    # admin_plataforma inicial
 seeds/seed_templates.py # 3 plantillas globales (login genérico, clon Facebook, clon Instagram)
 migrations/add_slug.sql # referencia histórica (el sistema ya no lo usa)
@@ -179,7 +188,7 @@ $env:TOTP_ENCRYPTION_KEY=(python -c "from cryptography.fernet import Fernet; pri
 python -m pytest tests -q
 ```
 
-Cobertura actual (90 pruebas):
+Cobertura actual (102 pruebas):
 | # | Prueba | Qué valida |
 |---|---|---|
 | 1-3 | slugify | Normalización de slugs (unitaria) |
@@ -203,8 +212,9 @@ Cobertura actual (90 pruebas):
 | 46 | **Campañas: QR + cancel + relanzar** | QR sin zonas 422, zonas con trim, render PNG, launch con correo+qr, cancel mata tokens al instante, relanzado revive tokens, cancelar cancelada 409, qr_clics aparte |
 | 47 | **Campañas: permisos** | Analista lee/no escribe; org B → 404; filtros por estado/grupo |
 | 48 | **Campañas: launch exige destinatarios** | Grupo vacío → 422; destinatario desactivado no cuenta |
-| 49-52 | **Importador por URL: unitarias** | Guardas SSRF (`_ip_bloqueada` parametrizada: loopback/privadas/metadata/link-local/multicast/reservadas; IPs públicas fuera), `_url_valida` (solo http/https), detección de carcasa SPA (React/Next vs página real), `procesar_html`: domestica (scripts/iframe/base/CSP/refresh/on*/javascript: fuera), absolutiza contra la URL final (incl. CSS), todo form → `/track/submit`, form mínimo si no hay password, leyenda idempotente, fragmento sin `<body>` |
-| 53-58 | **Importador por URL: integración** | Flujo A con redirect (asunto/nombre autogenerados, correo con `{{enlace}}`, landing domesticada y absolutizada, en el listado), fallback a B con render mockeado, render B real con Chromium local (skip si no está), errores 422 (500, no-HTML, >2 MB, ftp, canal inválido), SSRF real bloqueado (127.0.0.1/localhost/169.254.169.254/192.168.x), permisos (analista 403, sin token 401) |
+| 49-52 | **Importador por URL: unitarias** | Guardas SSRF (`_ip_bloqueada` parametrizada: loopback/privadas/metadata/link-local/multicast/reservadas; IPs públicas fuera), `_url_valida` (solo http/https), detección de carcasa SPA (React/Next vs página real), `procesar_html`: domestica (scripts/iframe/base/CSP/refresh/on*/javascript: fuera), absolutiza src/href/srcset contra la URL final (incl. CSS), todo form → `/track/submit`, form mínimo si no hay password, leyenda solo con `leyenda=True` (imports sin leyenda por ahora), fragmento sin `<body>` |
+| 53-60 | **Importador: inlining de CSS (unitarias)** | Hoja externa → `<style data-fuente>` (link fuera, `url()` absolutizada contra la HOJA), `@import` anidado absolutizado contra su propia hoja, 404/403 conserva el `<link>`, content-type no-CSS conserva el link, `</style>` dentro del CSS no se inlinea, hoja >1.5 MB conserva el link, presupuesto total (la 2ª hoja que no cabe conserva su link), `_css_a_absoluto` puro (relativa/absoluta/data:) |
+| 61-68 | **Importador por URL: integración** | Flujo A con redirect (asunto/nombre autogenerados, correo con `{{enlace}}`, landing domesticada + CSS inlineado + leyenda ausente, en el listado), fallback a B con render mockeado, render B real con Chromium local (skip si no está), errores 422 (500, no-HTML, >2 MB, ftp, canal inválido), SSRF real bloqueado (127.0.0.1/localhost/169.254.169.254/192.168.x), permisos (analista 403, sin token 401), previsualización: enlace efímero → GET público 200 text/html con CSS inline y CSP sin JS, token falso/vencido → 404, permisos del enlace (analista OK, otra org 404, sin sesión 401) |
 
 ## 8. Notas de despliegue local
 

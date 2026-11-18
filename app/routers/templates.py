@@ -17,8 +17,10 @@ from app.repositories import plantilla_repository as plantilla_repo
 from app.schemas.auth import error_payload
 from app.schemas.plantilla import (
     PlantillaCreateRequest, PlantillaDetailResponse, PlantillaImportarRequest, PlantillaListResponse,
-    PlantillaPatchRequest,
+    PlantillaPatchRequest, PlantillaPreviewResponse,
 )
+from app.routers.previsualizar import MINUTOS_ENLACE_PREVIA
+from app.core.security import create_preview_token
 from app.services import clonador_service
 from app.services import plantilla_service
 
@@ -112,6 +114,27 @@ async def import_template(
     except ValueError as e:
         _raise("VALIDATION_ERROR", str(e), 422)
     return _a_detalle(p, False)
+
+
+@router.get("/{plantilla_id}/previsualizar", response_model=PlantillaPreviewResponse)
+async def preview_template(
+    plantilla_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    org_id: uuid.UUID = Depends(get_current_org),
+    actor: Usuario = Depends(require_roles("admin_organizacion", "analista")),
+):
+    """Enlace efímero (JWT 30 min) que sirve la landing EXACTA que verá el destinatario.
+
+    Útil para probar el clon en un navegador real (sin el frontend). El token solo abre
+    ESTA plantilla y expira; el HTML ya viene sin scripts y con el CSS inlineado.
+    """
+    p = await _visible_o_404(db, plantilla_id, org_id)
+    token = create_preview_token(str(p.id_plantillas), str(org_id), minutos=MINUTOS_ENLACE_PREVIA)
+    base = str(request.base_url).rstrip("/")
+    return PlantillaPreviewResponse(
+        url=f"{base}/previsualizar/{token}", expira_en_minutos=MINUTOS_ENLACE_PREVIA,
+    )
 
 
 @router.get("/{plantilla_id}", response_model=PlantillaDetailResponse)

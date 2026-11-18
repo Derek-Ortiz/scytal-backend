@@ -10,6 +10,7 @@ from app.routers.auth import router as auth_router
 from app.routers.campaigns import router as campaigns_router
 from app.routers.groups import router as groups_router
 from app.routers.organizations import router as organizations_router
+from app.routers.previsualizar import router as previsualizar_router
 from app.routers.recipients import router as recipients_router
 from app.routers.templates import router as templates_router
 from app.routers.users import router as users_router
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(groups_router)
     app.include_router(recipients_router)
     app.include_router(templates_router)
+    app.include_router(previsualizar_router)
     app.include_router(campaigns_router)
     return app
 
