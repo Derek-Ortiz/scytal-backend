@@ -5,8 +5,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 CSP_API = "default-src 'none'; frame-ancestors 'none'"
-# CSP relajada solo para la UI interactiva (/docs, /redoc): Swagger UI carga CSS/JS
-# del CDN y usa un script inline; el resto de rutas usa la CSP estricta.
 RUTAS_DOCS = ("/docs", "/redoc", "/openapi.json")
 CSP_DOCS = (
     "default-src 'self'; "
@@ -17,10 +15,9 @@ CSP_DOCS = (
     "connect-src 'self'; "
     "frame-ancestors 'none'"
 )
-# /previsualizar: landing domesticada (snapshot SIN scripts, CSS inline). Se permiten
-# estilos inline y recursos https (por si quedó un <link> que no se pudo inlinear),
-# pero JavaScript queda bloqueado por defecto-src 'none' sin script-src.
+
 RUTA_PREVISUALIZAR = "/previsualizar/"
+RUTA_TRACK = "/track/"
 CSP_PREVISUALIZACION = (
     "default-src 'none'; "
     "style-src 'unsafe-inline' https:; "
@@ -30,7 +27,6 @@ CSP_PREVISUALIZACION = (
     "form-action 'self'; "
     "frame-ancestors 'none'"
 )
-
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -43,7 +39,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         csp = CSP_API
         if request.url.path.startswith(RUTAS_DOCS):
             csp = CSP_DOCS
-        elif request.url.path.startswith(RUTA_PREVISUALIZAR):
+        elif request.url.path.startswith(RUTA_PREVISUALIZAR) or request.url.path.startswith(RUTA_TRACK):
             csp = CSP_PREVISUALIZACION
         response.headers["Content-Security-Policy"] = csp
         response.headers["Referrer-Policy"] = "no-referrer"

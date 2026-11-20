@@ -132,6 +132,20 @@ Estados: `pendiente` (= draft) → `activa` → `completada` / `cancelada`. `pro
 | POST | `/campaigns/{id}/send-feedback` | `admin_organizacion` | Solo desde `completada`, una sola vez (2ª → **409**); marca `feedback_enviado_en` y envía en background el correo de resultados |
 | POST | `/campaigns/{id}/cancel` | `admin_organizacion` | `pendiente/activa` → `cancelada`; **tokens mueren al instante** (`expira_en = ahora`) |
 
+### `/track` (§4.9 — Fase 4)
+
+Endpoints **públicos** de rastreo (sin autenticación). El token viaja como `?t=` y se valida por **SHA-256** contra `token_hash` + `expira_en` (nunca el UUID). Token vencido/inválido → **respuesta genérica idéntica** en todos los endpoints (mismo pixel / redirect al awareness) **sin actualizar métricas**: no se revela si llegó a existir (§5). Rate limit **60/min por IP** (§6.2) con `Retry-After`. CSP de previsualización en `/track/`.
+
+Los tokens QR comparten la vida de los de destinatario (columna `campanas_qr_zonas.expira_en`, migración `0004`): se fijan al lanzar, mueren al cancelar y se re-daturan con el PATCH de expiración; `NULL` = aún no lanzada → inválido en `/track`.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/track/open?t=` | Pixel 1x1 GIF: evento `abierto` + estampa `abierto_en` (solo el 1º). QR/inválido → el **mismo** pixel sin métricas |
+| GET | `/track/click?t=` | Evento `click` + `clic_en` → **302** a `/track/landing?t=`. QR: estampa `clic_en` en la zona (anónimo, **sin eventos**, fuera del embudo). Inválido → 302 al awareness |
+| GET | `/track/landing?t=` | Landing de la campaña con el form reescrito a `action="/track/submit?t={token}"` (marcador `ACCION_FORM` del clonador, solo en memoria). Sin plantilla o token inválido → awareness |
+| POST | `/track/submit?t=` | Evento `subido` → **303** al awareness. **Sin modelo Pydantic de body**: los campos del formulario falso jamás se leen ni se guardan (§7). QR anónimo → solo awareness |
+| GET | `/track/awareness?t=` | Página educativa post-envío: estática y autocontenida, **siempre la misma respuesta** (el `t` no se valida) |
+
 ## 4. Seguridad implementada
 
 - **Contraseñas**: Argon2id (OWASP), mín. 10 caracteres, zxcvbn ≥ 3, lista local, HIBP (k-anonimato, cache Redis), historial últimas 3, rotación 90 días.
@@ -188,7 +202,7 @@ $env:TOTP_ENCRYPTION_KEY=(python -c "from cryptography.fernet import Fernet; pri
 python -m pytest tests -q
 ```
 
-Cobertura actual (102 pruebas):
+Cobertura actual (114 pruebas):
 | # | Prueba | Qué valida |
 |---|---|---|
 | 1-3 | slugify | Normalización de slugs (unitaria) |
@@ -215,6 +229,8 @@ Cobertura actual (102 pruebas):
 | 49-52 | **Importador por URL: unitarias** | Guardas SSRF (`_ip_bloqueada` parametrizada: loopback/privadas/metadata/link-local/multicast/reservadas; IPs públicas fuera), `_url_valida` (solo http/https), detección de carcasa SPA (React/Next vs página real), `procesar_html`: domestica (scripts/iframe/base/CSP/refresh/on*/javascript: fuera), absolutiza src/href/srcset contra la URL final (incl. CSS), todo form → `/track/submit`, form mínimo si no hay password, leyenda solo con `leyenda=True` (imports sin leyenda por ahora), fragmento sin `<body>` |
 | 53-60 | **Importador: inlining de CSS (unitarias)** | Hoja externa → `<style data-fuente>` (link fuera, `url()` absolutizada contra la HOJA), `@import` anidado absolutizado contra su propia hoja, 404/403 conserva el `<link>`, content-type no-CSS conserva el link, `</style>` dentro del CSS no se inlinea, hoja >1.5 MB conserva el link, presupuesto total (la 2ª hoja que no cabe conserva su link), `_css_a_absoluto` puro (relativa/absoluta/data:) |
 | 61-68 | **Importador por URL: integración** | Flujo A con redirect (asunto/nombre autogenerados, correo con `{{enlace}}`, landing domesticada + CSS inlineado + leyenda ausente, en el listado), fallback a B con render mockeado, render B real con Chromium local (skip si no está), errores 422 (500, no-HTML, >2 MB, ftp, canal inválido), SSRF real bloqueado (127.0.0.1/localhost/169.254.169.254/192.168.x), permisos (analista 403, sin token 401), previsualización: enlace efímero → GET público 200 text/html con CSS inline y CSP sin JS, token falso/vencido → 404, permisos del enlace (analista OK, otra org 404, sin sesión 401) |
+| 69-75 | **/track: unitarias** | Reescritura del `action` (doble/comilla simple, sin duplicar `?t=`, sin form sin cambios, marcador `ACCION_FORM = /track/submit`), pixel GIF 1x1, awareness sin scripts ni recursos externos |
+| 76-80 | **/track: integración** | Flujo completo open→click→landing (`action` reescrito)→submit (body del form DESCARTADO, 303)→awareness; token vencido → respuesta genérica sin métricas e idéntica a la de un token inexistente; QR anónimo (zona marcada, 0 eventos, embudo intacto), QR inválido sin lanzar y tras cancelar; rate limit 60/min → 429 + `Retry-After` |
 
 ## 8. Notas de despliegue local
 

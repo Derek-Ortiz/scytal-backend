@@ -1,19 +1,3 @@
-"""Lógica de /campaigns (§4.8) — el módulo con más decisiones de negocio.
-
-Estados (enum de BD): pendiente | programada | activa | completada | cancelada.
-- "draft" del spec = `pendiente` (no hay ruta para programar: `programada` queda sin uso).
-- launch: desde pendiente/completada/cancelada. Relanzar una campaña REINICIA tokens,
-  contadores y expiración; el histórico de eventos_tracking se conserva. Requiere plantilla
-  (el QR necesita la landing), ≥1 canal y ≥1 destinatario activo en el grupo → 422 si falta.
-- PATCH: en pendiente todo editable; en activa SOLO expiracion_horas (re-datura TODOS los
-  tokens, revivendo vencidos); en los demás estados no se edita nada → 409 (EstadoInvalido).
-- channels: solo en pendiente; el QR anónimo exige ≥1 zona (nunca queda sin zonas).
-- cancel: desde pendiente/activa → cancelada y mata los tokens AL INSTANTE (expira_en=ahora).
-- finish: solo desde activa → completada + instantaneas_phishing (25/25/50) + 1 alerta por
-  cada destinatario que envió datos en el formulario falso (nunca se guarda el contenido).
-- send-feedback: solo desde completada y UNA sola vez (2ª → 409); el envío real va en
-  background con delay entre correos y feedback_enviado_en se estampa de inmediato.
-"""
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -37,25 +21,19 @@ from app.services.email_service import send_many_detailed
 from app.services.maturity_service import calcular_puntaje_phishing, nivel_phishing
 from app.services.qr_service import generar_qr_base64
 
-
 class EstadoInvalido(ValueError):
     """Transición/edición imposible por el estado actual → el router responde 409 CONFLICT."""
-
 
 @dataclass
 class PlanDespacho:
     """Datos para el envío en background del correo de campaña (tras responder el HTTP)."""
 
-    items: list[tuple[uuid.UUID, str, str]] = field(default_factory=list)  # (id_fila_token, correo, token)
+    items: list[tuple[uuid.UUID, str, str]] = field(default_factory=list)
     asunto: str = ""
     contenido_html: str = ""
 
-
 ASUNTO_FEEDBACK = "Resultados de tu simulación de phishing"
 ASUNTO_CORREO_DEFECTO = "Simulación de phishing de seguridad"
-
-
-# ---- Render del correo (puro, para pruebas unitarias) ----
 
 def render_correo(contenido_html: str, token: str, base_url: str) -> str:
     """Sustituye {{enlace}} y {{pixel}} en el HTML de la plantilla.
@@ -75,9 +53,6 @@ def render_correo(contenido_html: str, token: str, base_url: str) -> str:
         html += pixel
     return html
 
-
-# ---- CRUD ----
-
 async def create_campana(
     db: AsyncSession, org_id: uuid.UUID, grupo_id: uuid.UUID, plantilla_id: uuid.UUID | None,
     nombre: str, expiracion_horas: int, actor: Usuario, request_id: str,
@@ -95,19 +70,18 @@ async def create_campana(
     log_event("campaign_created", request_id=request_id, campana_id=str(c.id_campanas), org_id=str(org_id))
     return c
 
-
 async def update_campana(
     db: AsyncSession, campana: Campana,
     nombre: str | None, grupo_id: uuid.UUID | None, plantilla_id: uuid.UUID | None,
     expiracion_horas: int | None, actor: Usuario, request_id: str,
 ) -> Campana:
     if campana.estado == "activa":
-        # Decisión: con la campaña activa SOLO se puede estirar/encoger la expiración.
         if nombre is not None or grupo_id is not None or plantilla_id is not None:
             raise EstadoInvalido("con la campaña activa solo se puede editar expiracion_horas")
         if expiracion_horas is None:
             raise ValueError("nada que editar: con la campaña activa solo se permite expiracion_horas")
         await campana_repo.re_datuar_tokens(db, campana.id_campanas, expiracion_horas)
+        await qr_repo.re_datuar_tokens(db, campana.id_campanas, expiracion_horas)
         campana.expiracion_horas = expiracion_horas
         await user_repo.save_audit(
             db, campana.org_id, "campaign_expiry_updated",
@@ -139,7 +113,6 @@ async def update_campana(
     log_event("campaign_updated", request_id=request_id, campana_id=str(c.id_campanas))
     return c
 
-
 async def definir_canales(
     db: AsyncSession, campana: Campana, canales: list[str], zonas: list[str] | None,
     actor: Usuario, request_id: str,
@@ -149,11 +122,9 @@ async def definir_canales(
         raise EstadoInvalido("los canales solo se definen con la campaña pendiente")
     if "qr" in canales:
         if not zonas:
-            # el schema ya lo valida; defensa extra por si llega por otra vía
             raise ValueError("el canal 'qr' requiere al menos una zona")
         await qr_repo.replace_zonas(db, campana.id_campanas, zonas)
     else:
-        # si el canal qr sale de la lista, sus zonas pierden sentido
         await qr_repo.borrar_zonas(db, campana.id_campanas)
     await campana_repo.replace_canales(db, campana.id_campanas, canales)
     detalle = ", ".join(canales) + (f" (zonas: {', '.join(zonas)})" if zonas else "")
@@ -164,9 +135,6 @@ async def definir_canales(
     await db.commit()
     log_event("campaign_channels_set", request_id=request_id, campana_id=str(campana.id_campanas), canales=canales)
     return campana
-
-
-# ---- Launch + envío en background ----
 
 async def launch(
     db: AsyncSession, campana: Campana, expiracion_horas: int | None, actor: Usuario, request_id: str
@@ -198,6 +166,8 @@ async def launch(
 
     horas = expiracion_horas or campana.expiracion_horas
     pares = await campana_repo.preparar_tokens(db, campana.id_campanas, destinatarios, horas)
+    if zonas:
+        await qr_repo.fijar_expiracion(db, campana.id_campanas, horas)
     campana.estado = "activa"
     campana.iniciada_en = datetime.now(timezone.utc)
     campana.expiracion_horas = horas
@@ -227,11 +197,9 @@ async def launch(
     )
     return campana, plan, len(zonas)
 
-
 async def _enviar_lote(lote: list[tuple[str, str, str, str | None]], *, request_id: str | None = None) -> list[bool]:
     """Punto único de envío: los tests lo reemplazan para no depender del SMTP."""
     return await send_many_detailed(lote, request_id=request_id)
-
 
 async def despachar_correos_lanzamiento(plan: PlanDespacho, request_id: str | None = None) -> None:
     """BackgroundTask del launch: abre SU PROPIA sesión y estampa enviado_en por éxito individual.
@@ -267,13 +235,11 @@ async def despachar_correos_lanzamiento(plan: PlanDespacho, request_id: str | No
         ok=len(ok_ids), fallos=len(resultados) - len(ok_ids),
     )
 
-
-# ---- Cancel ----
-
 async def cancel(db: AsyncSession, campana: Campana, actor: Usuario, request_id: str) -> Campana:
     if campana.estado not in ("pendiente", "activa"):
         raise EstadoInvalido(f"no se puede cancelar una campaña en estado {campana.estado}")
-    await campana_repo.caducar_tokens(db, campana.id_campanas)  # decisión: muerte inmediata
+    await campana_repo.caducar_tokens(db, campana.id_campanas)
+    await qr_repo.caducar_tokens(db, campana.id_campanas)
     c = await campana_repo.set_estado(db, campana, "cancelada")
     await user_repo.save_audit(
         db, campana.org_id, "campaign_cancelled",
@@ -282,9 +248,6 @@ async def cancel(db: AsyncSession, campana: Campana, actor: Usuario, request_id:
     await db.commit()
     log_event("campaign_cancelled", request_id=request_id, campana_id=str(c.id_campanas))
     return c
-
-
-# ---- Finish: instantáneas + alertas ----
 
 async def finish(db: AsyncSession, campana: Campana, actor: Usuario, request_id: str) -> dict:
     """Solo desde activa → completada. Calcula el índice §7 por token de destinatario.
@@ -335,9 +298,6 @@ async def finish(db: AsyncSession, campana: Campana, actor: Usuario, request_id:
     )
     return {"instantaneas": len(instantaneas), "alertas": len(alertas)}
 
-
-# ---- Feedback (manual, una sola vez) ----
-
 def _correo_feedback(puntaje: float, nivel: str, base_url: str) -> tuple[str, str]:
     texto = (
         f"En la simulación de phishing reciente tu índice de resistencia fue "
@@ -359,7 +319,6 @@ def _correo_feedback(puntaje: float, nivel: str, base_url: str) -> tuple[str, st
         '</div>'
     )
     return texto, html
-
 
 async def enviar_feedback(db: AsyncSession, campana: Campana, actor: Usuario, request_id: str) -> list[tuple[str, str, str, str | None]]:
     """Marca feedback_enviado_en DE INMEDIATO (bloquea el doble envío → 409) y retorna el lote
@@ -386,16 +345,12 @@ async def enviar_feedback(db: AsyncSession, campana: Campana, actor: Usuario, re
     log_event("campaign_feedback_sent", request_id=request_id, campana_id=str(campana.id_campanas), correos=len(lote))
     return lote
 
-
 async def despachar_correos_feedback(lote: list[tuple[str, str, str, str | None]], request_id: str | None = None) -> None:
     if not lote:
         return
     resultados = await _enviar_lote(lote, request_id=request_id)
     log_event("campaign_feedback_dispatched", request_id=request_id,
               ok=sum(1 for r in resultados if r), fallos=sum(1 for r in resultados if not r))
-
-
-# ---- QR ----
 
 async def urls_qr(db: AsyncSession, campana: Campana) -> list[dict]:
     """[{zona, url, qr_base64}] renderizado al vuelo (GET /campaigns/{id}/qr)."""

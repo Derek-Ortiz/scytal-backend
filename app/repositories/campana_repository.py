@@ -1,12 +1,3 @@
-"""Repositorio de campañas (§4.8): CRUD, canales, tokens por destinatario y métricas de embudo.
-
-Reglas de negocio vivas aquí:
-- preparar_tokens: (re)genera token único por destinatario×campaña — relanzar REINICIA contadores
-  y expiraciones; las filas de destinatarios que ya no están activos en el grupo quedan muertas
-  (expira_en = ahora) conservando su histórico de eventos_tracking.
-- caducar_tokens: cancelar mata todos los tokens al instante.
-- re_datuar_tokens: editar la expiración con la campaña activa re-datura TODAS las filas.
-"""
 import hashlib
 import secrets
 import uuid
@@ -19,15 +10,12 @@ from app.models.campana import Campana, CampanaCanal, DestinatarioCampana
 from app.models.destinatario import Destinatario
 from app.models.qr_zona import CampanaQrZona
 
-
 def generar_token() -> str:
     """Token en claro de 256 bits (solo se muestra una vez al destinatario; en BD va el hash)."""
     return secrets.token_hex(32)
 
-
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
-
 
 async def create(
     db: AsyncSession, org_id: uuid.UUID, grupo_id: uuid.UUID, plantilla_id: uuid.UUID | None,
@@ -41,14 +29,12 @@ async def create(
     await db.flush()
     return c
 
-
 async def find_by_id_in_org(db: AsyncSession, campana_id: uuid.UUID, org_id: uuid.UUID) -> Campana | None:
     """Búsqueda siempre acotada a la organización del actor (§6.1)."""
     res = await db.execute(
         select(Campana).where(Campana.id_campanas == campana_id, Campana.org_id == org_id)
     )
     return res.scalar_one_or_none()
-
 
 async def list_by_org(
     db: AsyncSession, org_id: uuid.UUID, limit: int, offset: int,
@@ -63,7 +49,6 @@ async def list_by_org(
     res = await db.execute(base.order_by(Campana.creado_en.desc(), Campana.id_campanas).limit(limit).offset(offset))
     return total, list(res.scalars().all())
 
-
 async def update_campos(db: AsyncSession, campana: Campana, **campos) -> Campana:
     for k, v in campos.items():
         if v is not None:
@@ -71,25 +56,19 @@ async def update_campos(db: AsyncSession, campana: Campana, **campos) -> Campana
     await db.flush()
     return campana
 
-
 async def set_estado(db: AsyncSession, campana: Campana, estado: str) -> Campana:
     campana.estado = estado
     await db.flush()
     return campana
-
-
-# ---- Canales ----
 
 async def replace_canales(db: AsyncSession, campana_id: uuid.UUID, canales: list[str]) -> None:
     await db.execute(delete(CampanaCanal).where(CampanaCanal.campana_id == campana_id))
     db.add_all([CampanaCanal(campana_id=campana_id, canal=c) for c in canales])
     await db.flush()
 
-
 async def get_canales(db: AsyncSession, campana_id: uuid.UUID) -> list[str]:
     res = await db.execute(select(CampanaCanal.canal).where(CampanaCanal.campana_id == campana_id))
     return [str(c) for c in res.scalars().all()]
-
 
 async def canales_de_campanas(
     db: AsyncSession, campana_ids: list[uuid.UUID]
@@ -102,7 +81,6 @@ async def canales_de_campanas(
     for cc in res.scalars().all():
         out.setdefault(cc.campana_id, []).append(str(cc.canal))
     return out
-
 
 async def zonas_de_campanas(
     db: AsyncSession, campana_ids: list[uuid.UUID]
@@ -118,15 +96,11 @@ async def zonas_de_campanas(
         out.setdefault(cid, []).append(str(zona))
     return out
 
-
-# ---- Tokens de destinatario ----
-
 async def destinatarios_activos_del_grupo(db: AsyncSession, grupo_id: uuid.UUID) -> list[Destinatario]:
     res = await db.execute(
         select(Destinatario).where(Destinatario.grupo_id == grupo_id, Destinatario.activo.is_(True))
     )
     return list(res.scalars().all())
-
 
 async def preparar_tokens(
     db: AsyncSession, campana_id: uuid.UUID, destinatarios: list[Destinatario], expiracion_horas: int
@@ -168,7 +142,6 @@ async def preparar_tokens(
     await db.flush()
     return pares
 
-
 async def caducar_tokens(db: AsyncSession, campana_id: uuid.UUID) -> None:
     """Cancelación (decisión): los tokens mueren AL INSTANTE, no al final del día."""
     await db.execute(
@@ -176,7 +149,6 @@ async def caducar_tokens(db: AsyncSession, campana_id: uuid.UUID) -> None:
         .where(DestinatarioCampana.campana_id == campana_id)
         .values(expira_en=datetime.now(timezone.utc))
     )
-
 
 async def re_datuar_tokens(db: AsyncSession, campana_id: uuid.UUID, expiracion_horas: int) -> None:
     """PATCH de expiración con la campaña activa: revive también los ya vencidos (decisión)."""
@@ -186,8 +158,21 @@ async def re_datuar_tokens(db: AsyncSession, campana_id: uuid.UUID, expiracion_h
         .values(expira_en=datetime.now(timezone.utc) + timedelta(hours=expiracion_horas))
     )
 
+async def marcar_abierto(db: AsyncSession, fila_id: uuid.UUID) -> None:
+    """Primer pixel de apertura estampa abierto_en; los siguientes no lo mueven."""
+    await db.execute(
+        update(DestinatarioCampana)
+        .where(DestinatarioCampana.id_destinatarios_campana == fila_id, DestinatarioCampana.abierto_en.is_(None))
+        .values(abierto_en=func.now())
+    )
 
-# ---- Métricas ----
+async def marcar_clic(db: AsyncSession, fila_id: uuid.UUID) -> None:
+    """Primer clic estampa clic_en; los siguientes no lo mueven (misma mecánica que el QR)."""
+    await db.execute(
+        update(DestinatarioCampana)
+        .where(DestinatarioCampana.id_destinatarios_campana == fila_id, DestinatarioCampana.clic_en.is_(None))
+        .values(clic_en=func.now())
+    )
 
 QUERY_EMBUDO = text("""
     SELECT
@@ -208,7 +193,6 @@ QUERY_EMBUDO = text("""
     WHERE dc.campana_id = :cid
 """)
 
-
 async def stats_embudo(db: AsyncSession, campana_id: uuid.UUID) -> dict:
     """Embudo §4.8 (enviados/abiertos/clics/enviados-datos) + clics QR anónimos aparte.
 
@@ -227,7 +211,6 @@ async def stats_embudo(db: AsyncSession, campana_id: uuid.UUID) -> dict:
         "subidos": int(fila["subidos"]),
         "qr_clics": int(qr),
     }
-
 
 QUERY_TABLA = text("""
     SELECT
@@ -260,7 +243,6 @@ QUERY_TABLA = text("""
     LIMIT :limit OFFSET :offset
 """)
 
-
 async def tabla_destinatarios(
     db: AsyncSession, campana_id: uuid.UUID, limit: int, offset: int
 ) -> tuple[int, list[dict]]:
@@ -286,7 +268,6 @@ async def tabla_destinatarios(
         })
     return int(total), filas
 
-
 QUERY_FINALIZAR = text("""
     SELECT
         dc.id_destinatarios_campana,
@@ -304,11 +285,9 @@ QUERY_FINALIZAR = text("""
     WHERE dc.campana_id = :cid
 """)
 
-
 async def filas_para_finalizar(db: AsyncSession, campana_id: uuid.UUID) -> list[dict]:
     res = await db.execute(QUERY_FINALIZAR, {"cid": str(campana_id)})
     return [dict(m) for m in res.mappings()]
-
 
 QUERY_FEEDBACK = text("""
     SELECT DISTINCT ON (ip.destinatario_id)
@@ -318,7 +297,6 @@ QUERY_FEEDBACK = text("""
     WHERE ip.campana_id = :cid
     ORDER BY ip.destinatario_id, ip.creado_en DESC
 """)
-
 
 async def resultados_para_feedback(db: AsyncSession, campana_id: uuid.UUID) -> list[dict]:
     """Resultados (correo, puntaje, nivel) del ÚLTIMO cierre de la campaña, para el feedback."""

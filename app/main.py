@@ -13,11 +13,11 @@ from app.routers.organizations import router as organizations_router
 from app.routers.previsualizar import router as previsualizar_router
 from app.routers.recipients import router as recipients_router
 from app.routers.templates import router as templates_router
+from app.routers.track import router as track_router
 from app.routers.users import router as users_router
 from app.schemas.auth import error_payload
 
 setup_logging()
-
 
 def create_app() -> FastAPI:
     s = get_settings()
@@ -31,10 +31,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Errores estándar §6.5
     @app.exception_handler(RequestValidationError)
     async def validation_handler(request: Request, exc: RequestValidationError):
-        # exc.errors() puede incluir objetos ValueError en ctx (no serializables): se limpia
         errores = [{k: v for k, v in e.items() if k != "ctx"} for e in exc.errors()]
         return JSONResponse(status_code=422, content=error_payload("VALIDATION_ERROR", "Datos inválidos", {"errors": errores}).model_dump())
 
@@ -65,7 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(templates_router)
     app.include_router(previsualizar_router)
     app.include_router(campaigns_router)
+    app.include_router(track_router)
     return app
-
 
 app = create_app()

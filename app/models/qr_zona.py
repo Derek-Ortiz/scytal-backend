@@ -8,7 +8,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
-
 class CampanaQrZona(Base):
     """Zona de un QR de campaña (decisión: canal QR anónimo con etiqueta de zona obligatoria).
 
@@ -29,5 +28,7 @@ class CampanaQrZona(Base):
     zona: Mapped[str] = mapped_column(String(100), nullable=False)
     token_qr: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+
+    expira_en: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     clic_en: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="CURRENT_TIMESTAMP")
