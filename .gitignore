@@ -40,3 +40,8 @@ docker-compose.override.yml
 
 prompt_frontend.md
 squema.sql
+
+# Artefactos de QA/tests locales (no van al repo)
+db-backend/
+codeql-config.yml
+resultados-backend.sarif
