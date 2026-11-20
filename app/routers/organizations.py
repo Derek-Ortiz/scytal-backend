@@ -1,4 +1,3 @@
-"""Rutas /organizations (§4.3 + decisión #7). Aislamiento multi-tenant: org_id solo del JWT (§6.1)."""
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -17,10 +16,8 @@ from app.services import organizacion_service
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
 
-
 def _raise(code: str, message: str, status_code: int):
     raise HTTPException(status_code=status_code, detail=error_payload(code, message).model_dump())
-
 
 async def _detail(db, org) -> OrganizacionDetailResponse:
     metricas = await org_repo.metricas(db, org.id_organizaciones)
@@ -31,7 +28,6 @@ async def _detail(db, org) -> OrganizacionDetailResponse:
         creado_en=org.creado_en,
         metricas=OrganizacionMetrics(**metricas),
     )
-
 
 @router.post("", response_model=OrganizacionCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_organization(
@@ -67,7 +63,6 @@ async def create_organization(
         admin=admin_payload,
     )
 
-
 @router.get("", response_model=OrganizacionListResponse)
 async def list_organizations(
     db: AsyncSession = Depends(get_db),
@@ -79,7 +74,6 @@ async def list_organizations(
     total, orgs = await org_repo.list_all(db, limit, offset)
     items = [await _detail(db, o) for o in orgs]
     return OrganizacionListResponse(total=total, items=items, limit=limit, offset=offset)
-
 
 @router.get("/{org_id}", response_model=OrganizacionDetailResponse)
 async def get_organization(
@@ -94,7 +88,6 @@ async def get_organization(
     if org is None:
         _raise("NOT_FOUND", "Organización no encontrada", 404)
     return await _detail(db, org)
-
 
 @router.patch("/{org_id}", response_model=OrganizacionResponse)
 async def patch_organization(

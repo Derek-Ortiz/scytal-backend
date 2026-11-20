@@ -1,9 +1,3 @@
-"""Lógica de negocio de /groups (§4.5).
-
-- Nombre único por organización (uk_grupos_org_nombre), comparación case-insensitive.
-- DELETE bloqueado si el grupo tiene campañas asociadas (RESTRICT del esquema);
-  los destinatarios del grupo se borran en cascada con él (ON DELETE CASCADE).
-"""
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +7,6 @@ from app.models.grupo import Grupo
 from app.models.usuario import Usuario
 from app.repositories import grupo_repository as grupo_repo
 from app.repositories import usuario_repository as user_repo
-
 
 async def create_grupo(db: AsyncSession, org_id: uuid.UUID, nombre: str, perfil: str, actor: Usuario, request_id: str) -> Grupo:
     if await grupo_repo.find_by_nombre(db, org_id, nombre):
@@ -25,7 +18,6 @@ async def create_grupo(db: AsyncSession, org_id: uuid.UUID, nombre: str, perfil:
     await db.commit()
     log_event("group_created", request_id=request_id, grupo_id=str(grupo.id_grupos))
     return grupo
-
 
 async def update_grupo(
     db: AsyncSession, grupo: Grupo, nombre: str | None, perfil: str | None, actor: Usuario, request_id: str
@@ -40,7 +32,6 @@ async def update_grupo(
     await db.commit()
     log_event("group_updated", request_id=request_id, grupo_id=str(grupo.id_grupos))
     return grupo
-
 
 async def delete_grupo(db: AsyncSession, grupo: Grupo, actor: Usuario, request_id: str) -> None:
     if await grupo_repo.has_campanas(db, grupo.id_grupos):

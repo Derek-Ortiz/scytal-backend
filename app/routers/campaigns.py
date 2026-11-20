@@ -1,9 +1,3 @@
-"""Rutas /campaigns (§4.8) — 11 rutas del spec + extensión GET /{id}/qr (render de zonas).
-
-Lecturas (list/detail/stats/recipients/qr): admin_organizacion y analista.
-Escrituras (create/patch/channels/launch/finish/send-feedback/cancel): solo admin_organizacion.
-El envío de correos (launch/feedback) va en BackgroundTasks: la respuesta no espera al SMTP.
-"""
 import uuid
 from typing import Literal
 
@@ -29,16 +23,13 @@ router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
 ESTADOS = ("pendiente", "programada", "activa", "completada", "cancelada")
 
-
 def _raise(code: str, message: str, status_code: int):
     raise HTTPException(status_code=status_code, detail=error_payload(code, message).model_dump())
-
 
 def _map_error(e: Exception):
     if isinstance(e, EstadoInvalido):
         _raise("CONFLICT", str(e), 409)
     _raise("VALIDATION_ERROR", str(e), 422)
-
 
 async def _a_detalle(db: AsyncSession, c: Campana) -> CampanaDetailResponse:
     """Detalle con canales y nombres de zona (2 viajes, sin N+1)."""
@@ -66,14 +57,11 @@ async def _a_detalle(db: AsyncSession, c: Campana) -> CampanaDetailResponse:
         canales=canales,
     )
 
-
 async def _campana_o_404(db: AsyncSession, campana_id: uuid.UUID, org_id: uuid.UUID) -> Campana:
     c = await campana_repo.find_by_id_in_org(db, campana_id, org_id)
     if c is None:
-        # Nunca se revela si existe en otra organización (§6.1)
         _raise("NOT_FOUND", "Campaña no encontrada", 404)
     return c
-
 
 @router.get("", response_model=CampanaListResponse)
 async def list_campaigns(
@@ -114,7 +102,6 @@ async def list_campaigns(
         ))
     return CampanaListResponse(total=total, items=items, limit=limit, offset=offset)
 
-
 @router.post("", response_model=CampanaDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_campaign(
     body: CampanaCreateRequest,
@@ -133,7 +120,6 @@ async def create_campaign(
         _map_error(e)
     return await _a_detalle(db, c)
 
-
 @router.get("/{campana_id}", response_model=CampanaDetailResponse)
 async def get_campaign(
     campana_id: uuid.UUID,
@@ -143,7 +129,6 @@ async def get_campaign(
 ):
     c = await _campana_o_404(db, campana_id, org_id)
     return await _a_detalle(db, c)
-
 
 @router.patch("/{campana_id}", response_model=CampanaDetailResponse)
 async def patch_campaign(
@@ -165,7 +150,6 @@ async def patch_campaign(
         _map_error(e)
     return await _a_detalle(db, c)
 
-
 @router.post("/{campana_id}/channels", response_model=CampanaDetailResponse)
 async def set_channels(
     campana_id: uuid.UUID,
@@ -184,7 +168,6 @@ async def set_channels(
     except ValueError as e:
         _map_error(e)
     return await _a_detalle(db, c)
-
 
 @router.post("/{campana_id}/launch", response_model=CampanaLaunchResponse)
 async def launch_campaign(
@@ -213,7 +196,6 @@ async def launch_campaign(
         zonas_qr=nzonas,
     )
 
-
 @router.get("/{campana_id}/qr", response_model=CampanaQrResponse)
 async def get_campaign_qr(
     campana_id: uuid.UUID,
@@ -227,7 +209,6 @@ async def get_campaign_qr(
     if not zonas:
         _raise("NOT_FOUND", "La campaña no tiene zonas QR definidas", 404)
     return CampanaQrResponse(campana_id=c.id_campanas, zonas=[QrZonaUrlResponse(**z) for z in zonas])
-
 
 @router.get("/{campana_id}/stats", response_model=CampanaStatsResponse)
 async def get_campaign_stats(
@@ -244,7 +225,6 @@ async def get_campaign_stats(
         enviados=stats["enviados"], abiertos=stats["abiertos"], clics=stats["clics"],
         subidos=stats["subidos"], qr_clics=stats["qr_clics"],
     )
-
 
 @router.get("/{campana_id}/recipients", response_model=CampanaRecipientsResponse)
 async def get_campaign_recipients(
@@ -264,7 +244,6 @@ async def get_campaign_recipients(
         limit=limit, offset=offset,
     )
 
-
 @router.post("/{campana_id}/finish", response_model=CampanaFinishResponse)
 async def finish_campaign(
     campana_id: uuid.UUID,
@@ -280,7 +259,6 @@ async def finish_campaign(
     except ValueError as e:
         _map_error(e)
     return CampanaFinishResponse(campana=await _a_detalle(db, c), **resumen)
-
 
 @router.post("/{campana_id}/send-feedback", response_model=CampanaFeedbackResponse)
 async def send_feedback(
@@ -301,7 +279,6 @@ async def send_feedback(
     return CampanaFeedbackResponse(
         message="Feedback en cola de envío", emails_programados=len(lote),
     )
-
 
 @router.post("/{campana_id}/cancel", response_model=CampanaDetailResponse)
 async def cancel_campaign(

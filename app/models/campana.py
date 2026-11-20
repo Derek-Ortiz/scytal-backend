@@ -10,7 +10,6 @@ from app.db.base import Base
 
 ESTADO_CAMPANA = ("pendiente", "programada", "activa", "completada", "cancelada")
 
-
 class Campana(Base):
     __tablename__ = "campanas"
 
@@ -26,8 +25,7 @@ class Campana(Base):
     )
     nombre: Mapped[str] = mapped_column(String(255), nullable=False)
     estado: Mapped[str] = mapped_column(PgEnum(*ESTADO_CAMPANA, name="estado_campana"), nullable=False, default="pendiente")
-    # Horas de vigencia de los tokens decidida por el usuario (decisión: la define el usuario;
-    # editable después del lanzamiento → re-datura expira_en de todas las filas).
+
     expiracion_horas: Mapped[int] = mapped_column(Integer, nullable=False, default=72)
     programada_en: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     iniciada_en: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -36,7 +34,6 @@ class Campana(Base):
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="CURRENT_TIMESTAMP")
     actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="CURRENT_TIMESTAMP")
 
-
 class CampanaCanal(Base):
     __tablename__ = "campana_canales"
 
@@ -44,7 +41,6 @@ class CampanaCanal(Base):
         UUID(as_uuid=True), ForeignKey("campanas.id_campanas", ondelete="CASCADE"), primary_key=True
     )
     canal: Mapped[str] = mapped_column(PgEnum("correo", "qr", name="tipo_canal"), primary_key=True)
-
 
 class DestinatarioCampana(Base):
     """Token único por destinatario×campaña. Guarda el hash SHA-256 del token, nunca el valor en claro (§6.4)."""

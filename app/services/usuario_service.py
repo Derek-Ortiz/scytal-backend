@@ -1,10 +1,3 @@
-"""Lógica de negocio de /users (§4.4).
-
-Invitación: contraseña temporal aleatoria (cumple §5), estado pendiente_2fa y cambio FORZOSO
-en el primer login (debe_cambiar_contrasena=True; las rutas de negocio responden
-PASSWORD_CHANGE_REQUIRED hasta que cambie — decisión #11 del usuario).
-Los datos de usuarios desactivados se conservan sin anonimizar (decisión #9).
-"""
 import secrets
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,11 +11,9 @@ from app.repositories import usuario_repository as user_repo
 from app.services.email_service import send_email
 from app.services.password_service import validate_password
 
-
 def generate_temp_password() -> str:
     """Contraseña temporal aleatoria (token_urlsafe): 16+ caracteres, pasa §5 sin ser diccionaria."""
     return secrets.token_urlsafe(14)
-
 
 async def _temp_password_valida() -> str:
     for _ in range(5):
@@ -30,7 +21,6 @@ async def _temp_password_valida() -> str:
         if not await validate_password(pw):
             return pw
     raise RuntimeError("No se pudo generar una contraseña temporal válida")
-
 
 def _correo_invitacion(correo: str, nombre_org: str, contrasena: str) -> tuple[str, str, str]:
     """(asunto, texto, html) del correo de invitación."""
@@ -56,7 +46,6 @@ def _correo_invitacion(correo: str, nombre_org: str, contrasena: str) -> tuple[s
     )
     return asunto, texto, html
 
-
 async def invite_analista(db: AsyncSession, org: Organizacion, correo: str, actor: Usuario, request_id: str) -> dict:
     """Crea un analista invitado y le envía sus credenciales temporales por correo."""
     correo_norm = correo.lower().strip()
@@ -67,7 +56,7 @@ async def invite_analista(db: AsyncSession, org: Organizacion, correo: str, acto
     user = Usuario(
         org_id=org.id_organizaciones,
         correo=correo_norm,
-        rol="analista",  # §5: por esta vía NUNCA se crea admin_organizacion ni admin_plataforma
+        rol="analista",
         hash_contrasena=hash_password(contrasena),
         estado="pendiente_2fa",
         activo=True,
@@ -85,13 +74,11 @@ async def invite_analista(db: AsyncSession, org: Organizacion, correo: str, acto
     log_event("invite_user", request_id=request_id, user_id=str(user.id_usuarios), email_sent=enviado)
     return {"user": user, "correo_enviado": enviado}
 
-
 async def change_role(db: AsyncSession, target: Usuario, nuevo_rol: str, actor: Usuario, request_id: str) -> Usuario:
     if target.id_usuarios == actor.id_usuarios:
         raise ValueError("no puedes cambiar tu propio rol")
     if target.rol == nuevo_rol:
         raise ValueError("el usuario ya tiene ese rol")
-    # No dejar a la organización sin admin_organizacion
     if target.rol == "admin_organizacion" and nuevo_rol != "admin_organizacion":
         admins = await user_repo.count_by_role(db, target.org_id, "admin_organizacion")
         if admins <= 1:
@@ -105,7 +92,6 @@ async def change_role(db: AsyncSession, target: Usuario, nuevo_rol: str, actor: 
     log_event("role_change", request_id=request_id, target_id=str(target.id_usuarios), rol=nuevo_rol)
     return target
 
-
 async def deactivate(db: AsyncSession, target: Usuario, actor: Usuario, request_id: str) -> Usuario:
     """Borrado lógico (§4.4): conserva datos, mata sesiones activas (version_token+1)."""
     if target.id_usuarios == actor.id_usuarios:
@@ -114,7 +100,7 @@ async def deactivate(db: AsyncSession, target: Usuario, actor: Usuario, request_
         raise ValueError("el usuario ya está desactivado")
     target.activo = False
     target.estado = "inactivo"
-    target.version_token += 1  # invalida JWT en circulación (§auth)
+    target.version_token += 1
     await user_repo.save_audit(
         db, target.org_id, "user_deactivated", f"Desactivación de {target.correo} (datos conservados)", actor_id=actor.id_usuarios
     )

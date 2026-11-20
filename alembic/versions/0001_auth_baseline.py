@@ -1,6 +1,3 @@
-"""Baseline de autenticación sobre squema.sql existente.
-Revision ID: 0001
-"""
 import sqlalchemy as sa
 from alembic import op
 
@@ -9,9 +6,7 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
-
 def upgrade():
-    # Si la BD es nueva (sin squema.sql), las tablas las crea 0002; aquí no hay nada que hacer.
     op.execute("""DO $$ BEGIN
     IF to_regclass('public.organizaciones') IS NOT NULL THEN
         ALTER TABLE organizaciones ADD COLUMN IF NOT EXISTS slug VARCHAR(150);
@@ -23,7 +18,6 @@ def upgrade():
             ALTER TABLE organizaciones ADD CONSTRAINT uk_organizaciones_slug UNIQUE (slug);
         END IF;
     END IF; END $$;""")
-
 
 def downgrade():
     op.execute("""DO $$ BEGIN

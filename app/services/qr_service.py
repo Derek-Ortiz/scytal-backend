@@ -1,9 +1,7 @@
-"""Generación de imágenes QR (canal anónimo por zonas) — parte pura, sin BD."""
 import base64
 import io
 
 import qrcode
-
 
 def generar_qr_base64(url: str) -> str:
     """PNG del QR en base64 puro (sin prefijo data:; el frontend decide cómo mostrarlo)."""

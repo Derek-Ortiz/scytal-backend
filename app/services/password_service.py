@@ -2,7 +2,6 @@ from zxcvbn import zxcvbn
 
 from app.services import hibp_service
 
-
 async def validate_password(password: str, recent_hashes: list[str] | None = None) -> list[str]:
     """Retorna lista de errores; vacío = válida (§5)."""
     from app.core.security import verify_password

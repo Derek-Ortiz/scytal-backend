@@ -10,21 +10,17 @@ from app.models.grupo import Grupo
 from app.models.organizacion import Organizacion
 from app.models.usuario import Usuario
 
-
 def slugify(nombre: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", nombre.strip().lower())
     return s.strip("-") or "org"
-
 
 async def find_by_slug(db: AsyncSession, slug: str) -> Organizacion | None:
     res = await db.execute(select(Organizacion).where(Organizacion.slug == slug))
     return res.scalar_one_or_none()
 
-
 async def find_by_id(db: AsyncSession, oid: uuid.UUID) -> Organizacion | None:
     res = await db.execute(select(Organizacion).where(Organizacion.id_organizaciones == oid))
     return res.scalar_one_or_none()
-
 
 async def create(db: AsyncSession, nombre: str, slug: str | None = None) -> Organizacion:
     final_slug = slug if slug else slugify(nombre)
@@ -32,7 +28,6 @@ async def create(db: AsyncSession, nombre: str, slug: str | None = None) -> Orga
     db.add(org)
     await db.flush()
     return org
-
 
 async def update(db: AsyncSession, org: Organizacion, nombre: str | None = None, slug: str | None = None) -> Organizacion:
     if nombre is not None:
@@ -42,13 +37,11 @@ async def update(db: AsyncSession, org: Organizacion, nombre: str | None = None,
     await db.flush()
     return org
 
-
 async def list_all(db: AsyncSession, limit: int, offset: int) -> tuple[int, list[Organizacion]]:
     """Todas las organizaciones (solo admin_plataforma)."""
     total = (await db.execute(select(func.count()).select_from(Organizacion))).scalar_one()
     res = await db.execute(select(Organizacion).order_by(Organizacion.creado_en.desc()).limit(limit).offset(offset))
     return total, list(res.scalars().all())
-
 
 async def metricas(db: AsyncSession, org_id: uuid.UUID) -> dict[str, int]:
     """Conteos para el detalle/listado de organizaciones (decisión #7)."""

@@ -7,7 +7,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
-
 class Grupo(Base):
     __tablename__ = "grupos"
     __table_args__ = (UniqueConstraint("org_id", "nombre", name="uk_grupos_org_nombre"),)

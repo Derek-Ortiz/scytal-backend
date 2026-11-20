@@ -1,16 +1,10 @@
-"""Pruebas de integración POST /templates/importar (Opción A + B).
-
-La red se simula con httpx.MockTransport (inyectado en clonador_service._cliente) y el
-resolver DNS con un _ips_de_host falso (IP pública) — así se ejercita el pipeline completo
-sin salir de la máquina. El guardián SSRF REAL se prueba aparte con hosts loopback/metadata.
-"""
 import httpx
 import pytest
 
 pytestmark = pytest.mark.integration
 
-from app.services import clonador_service  # noqa: E402
-from tests.integration.test_groups import _crear_analista, _org_con_token  # noqa: E402
+from app.services import clonador_service
+from tests.integration.test_groups import _crear_analista, _org_con_token
 
 PAGINA = (
     '<html><head><title>Portal internos</title>'
@@ -38,10 +32,8 @@ RENDERIZADO = (
     '</form></div></body></html>'
 )
 
-
 CSS_PORTAL = ".portal{color:#123}\nbody{background:url(/img/fondo-portal.png)}"
 CSS_APP = ".spa{color:#456}"
-
 
 def _transporte() -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -65,7 +57,6 @@ def _transporte() -> httpx.MockTransport:
 
     return httpx.MockTransport(handler)
 
-
 @pytest.fixture
 def red_falsa(monkeypatch):
     """Inyecta transporte de prueba + resolver DNS falso (IP pública para todos los hosts)."""
@@ -79,7 +70,6 @@ def red_falsa(monkeypatch):
         lambda: httpx.AsyncClient(transport=_transporte(), follow_redirects=False, timeout=5),
     )
 
-
 @pytest.mark.asyncio
 async def test_importar_flujo_estatico_con_redirect(client, integration_guard, red_falsa):
     reg, tok = await _org_con_token(client, "import")
@@ -91,29 +81,25 @@ async def test_importar_flujo_estatico_con_redirect(client, integration_guard, r
     assert r.status_code == 201, r.text
     p = r.json()
     assert p["nombre"] == "Portal empleados"
-    assert p["asunto"] == "Verificación de seguridad de portal.falso.com"  # autogenerado
-    assert p["canal"] == "correo" and p["perfil"] == "corporativo"  # defaults
+    assert p["asunto"] == "Verificación de seguridad de portal.falso.com"
+    assert p["canal"] == "correo" and p["perfil"] == "corporativo"
     assert p["contenido_html"].startswith("<div") and "{{enlace}}" in p["contenido_html"]
 
     landing = p["landing_html"]
-    assert 'action="/track/submit"' in landing               # form capturado
+    assert 'action="/track/submit"' in landing
     assert 'method="post"' in landing
-    assert "<script" not in landing                          # snapshot sin vida
+    assert "<script" not in landing
     assert "onerror" not in landing
-    assert 'src="https://portal.falso.com/img/logo.png"' in landing   # absolutizado
-    assert "integrity" not in landing                        # integridad soltada
-    # snapshot AUTOCONTENIDO: el CSS de /css/portal.css queda inline (sin <link>)
+    assert 'src="https://portal.falso.com/img/logo.png"' in landing
+    assert "integrity" not in landing
     assert "<link" not in landing
     assert "<style" in landing and "data-fuente" in landing
-    assert ".portal{color:#123}" in landing                  # contenido del CSS
-    assert "https://portal.falso.com/img/fondo-portal.png" in landing  # url() absolutizada
-    # leyenda DESACTIVADA temporalmente en imports (validación de frontend)
+    assert ".portal{color:#123}" in landing
+    assert "https://portal.falso.com/img/fondo-portal.png" in landing
     assert "PÁGINA DE PRUEBA" not in landing
 
-    # en_uso False y visible en el listado
     r = await client.get("/templates", headers=headers)
     assert any(i["nombre"] == "Portal empleados" for i in r.json()["items"])
-
 
 @pytest.mark.asyncio
 async def test_importar_fallback_render_b(client, integration_guard, red_falsa, monkeypatch):
@@ -133,14 +119,13 @@ async def test_importar_fallback_render_b(client, integration_guard, red_falsa, 
         "url": "https://spa.falso.com/spa",
     })
     assert r.status_code == 201, r.text
-    assert llamadas == ["https://spa.falso.com/spa"]  # B recibió la URL final
+    assert llamadas == ["https://spa.falso.com/spa"]
     landing = r.json()["landing_html"]
-    assert 'action="/track/submit"' in landing           # form del DOM renderizado capturado
+    assert 'action="/track/submit"' in landing
     assert "<script" not in landing
-    assert "<link" not in landing                        # CSS del DOM renderizado inline
+    assert "<link" not in landing
     assert ".spa{color:#456}" in landing
     assert "PÁGINA DE PRUEBA" not in landing
-
 
 @pytest.mark.asyncio
 async def test_importar_render_b_real_si_chromium(client, integration_guard):
@@ -155,30 +140,25 @@ async def test_importar_render_b_real_si_chromium(client, integration_guard):
         if "Chromium" in str(e):
             pytest.skip(f"Chromium no disponible: {e}")
         raise
-    assert 'type="password"' in html           # Chromium produjo el DOM (el JS está vivo)
+    assert 'type="password"' in html
     procesada = clonador_service.procesar_html(html, "https://x.com/")
-    assert 'action="/track/submit"' in procesada  # el pipeline la convertiría en plantilla
-
+    assert 'action="/track/submit"' in procesada
 
 @pytest.mark.asyncio
 async def test_importar_errores(client, integration_guard, red_falsa):
     reg, tok = await _org_con_token(client, "impe")
     headers = {"Authorization": f"Bearer {tok}"}
 
-    # 404 (contenido default del handler) → el clon del 404 HTML sí es válido; sin cuerpo válido:
     r = await client.post("/templates/importar", headers=headers, json={"url": "https://x.falso.com/muere"})
     assert r.status_code == 422 and "500" in r.json()["error"]["message"]
     r = await client.post("/templates/importar", headers=headers, json={"url": "https://x.falso.com/nohtml"})
     assert r.status_code == 422 and "HTML" in r.json()["error"]["message"]
     r = await client.post("/templates/importar", headers=headers, json={"url": "https://x.falso.com/grande"})
     assert r.status_code == 422 and "MB" in r.json()["error"]["message"]
-    # esquema prohibido → 422
     r = await client.post("/templates/importar", headers=headers, json={"url": "ftp://x.falso.com/x"})
     assert r.status_code == 422
-    # canal inválido → 422 (schema)
     r = await client.post("/templates/importar", headers=headers, json={"url": "https://x.falso.com/login", "canal": "sms"})
     assert r.status_code == 422
-
 
 @pytest.mark.asyncio
 async def test_importar_bloquea_ssrf_real(client, integration_guard):
@@ -195,7 +175,6 @@ async def test_importar_bloquea_ssrf_real(client, integration_guard):
         assert r.status_code == 422, url_mala
         assert "interna" in r.json()["error"]["message"]
 
-
 @pytest.mark.asyncio
 async def test_importar_permisos(client, integration_guard):
     reg, tok = await _org_con_token(client, "impp")
@@ -206,9 +185,6 @@ async def test_importar_permisos(client, integration_guard):
     assert r.status_code == 403
     r = await client.post("/templates/importar", json={"url": "https://x.falso.com/login"})
     assert r.status_code == 401
-
-
-# ---- GET /templates/{id}/previsualizar + GET /previsualizar/{token} ----
 
 @pytest.mark.asyncio
 async def test_previsualizacion_flujo_completo(client, integration_guard, red_falsa):
@@ -226,25 +202,22 @@ async def test_previsualizacion_flujo_completo(client, integration_guard, red_fa
     assert data["expira_en_minutos"] == 30
     assert "/previsualizar/" in data["url"]
 
-    # la URL se abre sin autenticación: es lo que verá el destinatario
     r2 = await client.get(data["url"])
     assert r2.status_code == 200
     assert r2.headers["content-type"].startswith("text/html")
     assert r2.headers["cache-control"] == "no-store"
     assert 'action="/track/submit"' in r2.text
-    assert ".portal{color:#123}" in r2.text                      # CSS inline servido
+    assert ".portal{color:#123}" in r2.text
     csp = r2.headers["content-security-policy"]
-    assert "style-src 'unsafe-inline' https:" in csp             # estilos inline permitidos
-    assert "script-src" not in csp and "default-src 'none'" in csp  # JS bloqueado
+    assert "style-src 'unsafe-inline' https:" in csp
+    assert "script-src" not in csp and "default-src 'none'" in csp
 
-    # token falso → 404 | token vencido → 404
     r3 = await client.get("/previsualizar/token-falso")
     assert r3.status_code == 404
     from app.core.security import create_preview_token
     vencido = create_preview_token(pid, reg["org_id"], minutos=-1)
     r4 = await client.get(f"/previsualizar/{vencido}")
     assert r4.status_code == 404
-
 
 @pytest.mark.asyncio
 async def test_previsualizacion_permisos(client, integration_guard):
@@ -260,11 +233,9 @@ async def test_previsualizacion_permisos(client, integration_guard):
                          headers={"Authorization": f"Bearer {tok_analista}"})
     assert r.status_code == 200
 
-    # org B (otra organización): plantilla ajena → 404 al mintear
     reg_b, tok_b = await _org_con_token(client, "prevq")
     r = await client.get(f"/templates/{pid}/previsualizar",
                          headers={"Authorization": f"Bearer {tok_b}"})
     assert r.status_code == 404
-    # sin sesión → 401
     r = await client.get(f"/templates/{pid}/previsualizar")
     assert r.status_code == 401

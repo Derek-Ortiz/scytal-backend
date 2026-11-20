@@ -1,4 +1,3 @@
-"""Repositorio de plantillas (§4.7). Visibilidad: global (org_id NULL) + propias de la org."""
 import uuid
 
 from sqlalchemy import func, select
@@ -8,7 +7,6 @@ from app.models.campana import Campana
 from app.models.plantilla import Plantilla
 
 ESTADOS_QUE_BLOQUEAN = ("pendiente", "programada", "activa")
-
 
 async def create(
     db: AsyncSession, org_id: uuid.UUID | None, nombre: str, perfil: str, canal: str,
@@ -23,7 +21,6 @@ async def create(
     await db.flush()
     return p
 
-
 async def find_by_id_visible(db: AsyncSession, plantilla_id: uuid.UUID, org_id: uuid.UUID) -> Plantilla | None:
     """Visible si es global (org_id NULL) o de la propia organización (§6.1)."""
     res = await db.execute(
@@ -34,13 +31,11 @@ async def find_by_id_visible(db: AsyncSession, plantilla_id: uuid.UUID, org_id: 
     )
     return res.scalar_one_or_none()
 
-
 async def find_own(db: AsyncSession, plantilla_id: uuid.UUID, org_id: uuid.UUID) -> Plantilla | None:
     res = await db.execute(
         select(Plantilla).where(Plantilla.id_plantillas == plantilla_id, Plantilla.org_id == org_id)
     )
     return res.scalar_one_or_none()
-
 
 async def list_visible(
     db: AsyncSession, org_id: uuid.UUID, limit: int, offset: int,
@@ -55,20 +50,16 @@ async def list_visible(
     res = await db.execute(base.order_by(Plantilla.creado_en.asc(), Plantilla.id_plantillas).limit(limit).offset(offset))
     return total, list(res.scalars().all())
 
-
 async def update(db: AsyncSession, plantilla: Plantilla, **campos) -> Plantilla:
     for k, v in campos.items():
         if v is not None:
             setattr(plantilla, k, v.strip() if isinstance(v, str) else v)
-    # asunto puede volver a None explícitamente solo si el canal cambia; aquí None = "no tocar"
     await db.flush()
     return plantilla
-
 
 async def delete(db: AsyncSession, plantilla: Plantilla) -> None:
     await db.delete(plantilla)
     await db.flush()
-
 
 async def en_uso(db: AsyncSession, plantilla_id: uuid.UUID) -> bool:
     """En uso = referenciada por una campaña que aún puede lanzarse (pendiente/programada/activa).

@@ -1,9 +1,3 @@
-"""Schemas de /campaigns (§4.8).
-
-Decisión de diseño: el "draft" del spec es el estado `pendiente` del enum de BD.
-La expiración (horas) la define el usuario y es editable también con la campaña activa
-(→ re-datura expira_en de todos los tokens). El canal `qr` es anónimo y exige zonas.
-"""
 import uuid
 from datetime import datetime
 from typing import Literal, Optional
@@ -12,12 +6,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.plantilla import CANALES
 
-
 def _no_vacio(v: str | None) -> str | None:
     if v is not None and not v.strip():
         raise ValueError("no puede estar vacío o ser solo espacios")
     return v
-
 
 class CampanaCreateRequest(BaseModel):
     nombre: str = Field(min_length=1, max_length=255)
@@ -26,7 +18,6 @@ class CampanaCreateRequest(BaseModel):
     expiracion_horas: int = Field(default=72, ge=1, le=8760)
 
     _v = field_validator("nombre")(_no_vacio)
-
 
 class CampanaPatchRequest(BaseModel):
     """Con `activa` SOLO se permite expiracion_horas (validado en el servicio → 409 si no)."""
@@ -37,7 +28,6 @@ class CampanaPatchRequest(BaseModel):
     expiracion_horas: Optional[int] = Field(default=None, ge=1, le=8760)
 
     _v = field_validator("nombre")(_no_vacio)
-
 
 class CampanaChannelsRequest(BaseModel):
     """Define canales en `campana_canales`. Solo con la campaña en `pendiente`.
@@ -82,19 +72,14 @@ class CampanaChannelsRequest(BaseModel):
             raise ValueError("las zonas solo aplican al canal 'qr'")
         return self
 
-
 class CampanaLaunchRequest(BaseModel):
     """Cuerpo opcional del launch: si envía expiracion_horas, sobrescribe la guardada."""
 
     expiracion_horas: Optional[int] = Field(default=None, ge=1, le=8760)
 
-
-# ---- Respuestas ----
-
 class CampanaCanalResponse(BaseModel):
     canal: str
     zonas: list[str] = []
-
 
 class CampanaResponse(BaseModel):
     id_campanas: uuid.UUID
@@ -112,16 +97,13 @@ class CampanaResponse(BaseModel):
     actualizado_en: datetime
     canales: list[CampanaCanalResponse] = []
 
-
 CampanaDetailResponse = CampanaResponse
-
 
 class CampanaListResponse(BaseModel):
     total: int
     items: list[CampanaResponse]
     limit: int
     offset: int
-
 
 class CampanaStatsResponse(BaseModel):
     """Embudo §4.8: enviados/abiertos/clics/enviados-datos sobre los tokens de destinatario.
@@ -138,7 +120,6 @@ class CampanaStatsResponse(BaseModel):
     subidos: int
     qr_clics: int = 0
 
-
 class CampanaRecipienteRow(BaseModel):
     destinatario_id: uuid.UUID
     correo: str
@@ -151,7 +132,6 @@ class CampanaRecipienteRow(BaseModel):
     puntaje_phishing: Optional[float] = None
     nivel: Optional[str] = None
 
-
 class CampanaRecipientsResponse(BaseModel):
     campana_id: uuid.UUID
     total: int
@@ -159,29 +139,24 @@ class CampanaRecipientsResponse(BaseModel):
     limit: int
     offset: int
 
-
 class QrZonaUrlResponse(BaseModel):
     zona: str
     url: str
     qr_base64: str
 
-
 class CampanaQrResponse(BaseModel):
     campana_id: uuid.UUID
     zonas: list[QrZonaUrlResponse]
-
 
 class CampanaFinishResponse(BaseModel):
     campana: CampanaResponse
     instantaneas: int
     alertas: int
 
-
 class CampanaLaunchResponse(BaseModel):
     campana: CampanaResponse
     emails_programados: int
     zonas_qr: int
-
 
 class CampanaFeedbackResponse(BaseModel):
     ok: bool = True

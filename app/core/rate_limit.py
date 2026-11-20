@@ -1,10 +1,7 @@
-"""Rate limiting con Redis (§6.2). Falla abierto si Redis no está disponible."""
-
 import redis.asyncio as redis
 from app.core.config import get_settings
 
 _redis_client: redis.Redis | None = None
-
 
 def _get_redis() -> redis.Redis | None:
     global _redis_client
@@ -14,7 +11,6 @@ def _get_redis() -> redis.Redis | None:
         except Exception:
             return None
     return _redis_client
-
 
 async def check_limit(key: str, limit: int, window_seconds: int) -> bool:
     """Retorna True si está dentro del límite, False si lo excedió. Fail-open."""
@@ -28,6 +24,4 @@ async def check_limit(key: str, limit: int, window_seconds: int) -> bool:
         return current <= limit
     except Exception:
         return True
-
-
 

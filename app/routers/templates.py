@@ -1,8 +1,3 @@
-"""Rutas /templates (§4.7). Plantillas globales (org_id NULL) son de solo lectura para las orgs.
-
-Lecturas: admin_organizacion y analista. Escrituras: solo admin_organizacion, y SOLO sobre
-plantillas propias (global ajena → 403 FORBIDDEN).
-"""
 import uuid
 from typing import Literal
 
@@ -26,10 +21,8 @@ from app.services import plantilla_service
 
 router = APIRouter(prefix="/templates", tags=["templates"])
 
-
 def _raise(code: str, message: str, status_code: int):
     raise HTTPException(status_code=status_code, detail=error_payload(code, message).model_dump())
-
 
 def _a_detalle(p: Plantilla, en_uso: bool) -> PlantillaDetailResponse:
     return PlantillaDetailResponse(
@@ -46,14 +39,11 @@ def _a_detalle(p: Plantilla, en_uso: bool) -> PlantillaDetailResponse:
         en_uso=en_uso,
     )
 
-
 async def _visible_o_404(db: AsyncSession, plantilla_id: uuid.UUID, org_id: uuid.UUID) -> Plantilla:
     p = await plantilla_repo.find_by_id_visible(db, plantilla_id, org_id)
     if p is None:
-        # Nunca se revela si existe en otra organización (§6.1)
         _raise("NOT_FOUND", "Plantilla no encontrada", 404)
     return p
-
 
 @router.get("", response_model=PlantillaListResponse)
 async def list_templates(
@@ -69,10 +59,8 @@ async def list_templates(
     total, plantillas = await plantilla_repo.list_visible(db, org_id, limit, offset, perfil=perfil, canal=canal)
     items = []
     for p in plantillas:
-        # en_uso por ítem: consulta puntual (listas de plantillas son cortas)
         items.append(_a_detalle(p, await plantilla_repo.en_uso(db, p.id_plantillas)))
     return PlantillaListResponse(total=total, items=items, limit=limit, offset=offset)
-
 
 @router.post("", response_model=PlantillaDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_template(
@@ -90,7 +78,6 @@ async def create_template(
     except ValueError as e:
         _raise("VALIDATION_ERROR", str(e), 422)
     return _a_detalle(p, False)
-
 
 @router.post("/importar", response_model=PlantillaDetailResponse, status_code=status.HTTP_201_CREATED)
 async def import_template(
@@ -115,7 +102,6 @@ async def import_template(
         _raise("VALIDATION_ERROR", str(e), 422)
     return _a_detalle(p, False)
 
-
 @router.get("/{plantilla_id}/previsualizar", response_model=PlantillaPreviewResponse)
 async def preview_template(
     plantilla_id: uuid.UUID,
@@ -136,7 +122,6 @@ async def preview_template(
         url=f"{base}/previsualizar/{token}", expira_en_minutos=MINUTOS_ENLACE_PREVIA,
     )
 
-
 @router.get("/{plantilla_id}", response_model=PlantillaDetailResponse)
 async def get_template(
     plantilla_id: uuid.UUID,
@@ -147,7 +132,6 @@ async def get_template(
     """Detalle con preview (HTML completo) y bandera en_uso."""
     p = await _visible_o_404(db, plantilla_id, org_id)
     return _a_detalle(p, await plantilla_repo.en_uso(db, p.id_plantillas))
-
 
 @router.patch("/{plantilla_id}", response_model=PlantillaDetailResponse)
 async def patch_template(
@@ -160,7 +144,6 @@ async def patch_template(
 ):
     p = await _visible_o_404(db, plantilla_id, org_id)
     if p.org_id != org_id:
-        # Plantilla GLOBAL: legible por todos, editable solo por su dueña (aquí: ninguna org)
         _raise("FORBIDDEN", "Las plantillas globales no se pueden editar desde una organización", 403)
     if all(v is None for v in (body.nombre, body.perfil, body.canal, body.asunto, body.contenido_html, body.landing_html)):
         _raise("VALIDATION_ERROR", "Nada que editar: envía al menos un campo", 422)
@@ -174,7 +157,6 @@ async def patch_template(
     except ValueError as e:
         _raise("VALIDATION_ERROR", str(e), 422)
     return _a_detalle(p, await plantilla_repo.en_uso(db, p.id_plantillas))
-
 
 @router.delete("/{plantilla_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_template(

@@ -7,14 +7,12 @@ from app.models.destinatario import Destinatario
 from app.models.grupo import Grupo
 from app.models.instantanea import InstantaneaPhishing
 
-
 async def create(db: AsyncSession, org_id: uuid.UUID, grupo_id: uuid.UUID, correo: str) -> Destinatario:
     """correo va normalizado en minúsculas (la columna es CITEXT: unicidad case-insensitive)."""
     d = Destinatario(org_id=org_id, grupo_id=grupo_id, correo=correo.strip().lower())
     db.add(d)
     await db.flush()
     return d
-
 
 async def find_by_id_in_org(db: AsyncSession, destinatario_id: uuid.UUID, org_id: uuid.UUID) -> Destinatario | None:
     """Búsqueda siempre acotada a la organización del actor (§6.1)."""
@@ -23,14 +21,12 @@ async def find_by_id_in_org(db: AsyncSession, destinatario_id: uuid.UUID, org_id
     )
     return res.scalar_one_or_none()
 
-
 async def find_by_correo(db: AsyncSession, org_id: uuid.UUID, correo: str) -> Destinatario | None:
     """CITEXT compara sin distinguir mayúsculas: cubre todos los casos de uk_destinatarios_org_correo."""
     res = await db.execute(
         select(Destinatario).where(Destinatario.org_id == org_id, Destinatario.correo == correo.strip().lower())
     )
     return res.scalar_one_or_none()
-
 
 async def list_by_org(
     db: AsyncSession, org_id: uuid.UUID, limit: int, offset: int, grupo_id: uuid.UUID | None = None
@@ -43,7 +39,6 @@ async def list_by_org(
     res = await db.execute(base.order_by(Destinatario.creado_en.asc()).limit(limit).offset(offset))
     return total, list(res.scalars().all())
 
-
 async def update(
     db: AsyncSession, destinatario: Destinatario, correo: str | None = None, grupo_id: uuid.UUID | None = None
 ) -> Destinatario:
@@ -54,13 +49,11 @@ async def update(
     await db.flush()
     return destinatario
 
-
 async def set_activo(db: AsyncSession, destinatario: Destinatario, activo: bool) -> Destinatario:
     """Borrado lógico (decisión #9): conserva el registro y su histórico."""
     destinatario.activo = activo
     await db.flush()
     return destinatario
-
 
 async def correos_existentes(db: AsyncSession, org_id: uuid.UUID, correos: list[str]) -> set[str]:
     """De la lista dada, cuáles ya existen en la org (activos o no). Para el dedupe del CSV."""
@@ -72,7 +65,6 @@ async def correos_existentes(db: AsyncSession, org_id: uuid.UUID, correos: list[
         )
     )
     return {str(c) for c in res.scalars().all()}
-
 
 async def historico_instantaneas(
     db: AsyncSession, org_id: uuid.UUID, destinatario_id: uuid.UUID, limit: int = 20
@@ -86,13 +78,11 @@ async def historico_instantaneas(
     )
     return list(res.scalars().all())
 
-
 async def count_activos(db: AsyncSession, org_id: uuid.UUID) -> int:
     res = await db.execute(
         select(func.count()).select_from(Destinatario).where(Destinatario.org_id == org_id, Destinatario.activo.is_(True))
     )
     return res.scalar_one()
-
 
 async def grupos_por_nombre(db: AsyncSession, org_id: uuid.UUID) -> dict[str, uuid.UUID]:
     """{nombre_minúsculas: id_grupos} de todos los grupos de la org — para el mapeo del CSV."""

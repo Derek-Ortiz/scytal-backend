@@ -1,7 +1,3 @@
-"""Rutas /recipients (§4.6). Aislamiento multi-tenant: org_id solo del JWT (§6.1).
-
-Lecturas: admin_organizacion y analista. Escrituras: solo admin_organizacion.
-"""
 import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
@@ -23,18 +19,15 @@ from app.services import destinatario_service
 
 router = APIRouter(prefix="/recipients", tags=["recipients"])
 
-MAX_CSV_BYTES = 2 * 1024 * 1024  # 2 MB
-
+MAX_CSV_BYTES = 2 * 1024 * 1024
 
 def _raise(code: str, message: str, status_code: int):
     raise HTTPException(status_code=status_code, detail=error_payload(code, message).model_dump())
-
 
 def _response(d: Destinatario) -> DestinatarioResponse:
     return DestinatarioResponse(
         id_destinatarios=d.id_destinatarios, correo=d.correo, grupo_id=d.grupo_id, activo=d.activo, creado_en=d.creado_en
     )
-
 
 async def _grupo_en_org_o_404(db: AsyncSession, grupo_id: uuid.UUID, org_id: uuid.UUID) -> Grupo:
     grupo = await grupo_repo.find_by_id_in_org(db, grupo_id, org_id)
@@ -42,14 +35,11 @@ async def _grupo_en_org_o_404(db: AsyncSession, grupo_id: uuid.UUID, org_id: uui
         _raise("NOT_FOUND", "Grupo no encontrado", 404)
     return grupo
 
-
 async def _destinatario_o_404(db: AsyncSession, destinatario_id: uuid.UUID, org_id: uuid.UUID) -> Destinatario:
     d = await dest_repo.find_by_id_in_org(db, destinatario_id, org_id)
     if d is None:
-        # Nunca se revela si pertenece a otra organización (§6.1)
         _raise("NOT_FOUND", "Destinatario no encontrado", 404)
     return d
-
 
 @router.post("", response_model=DestinatarioResponse, status_code=status.HTTP_201_CREATED)
 async def create_recipient(
@@ -71,7 +61,6 @@ async def create_recipient(
         _raise("VALIDATION_ERROR", str(e), 422)
     return _response(d)
 
-
 @router.post("/import", response_model=CSVImportResponse, status_code=status.HTTP_201_CREATED)
 async def import_recipients(
     request: Request,
@@ -89,9 +78,8 @@ async def import_recipients(
         return CSVImportResponse(**await destinatario_service.import_csv(
             db, org_id, contenido, actor, request.headers.get("x-request-id", "")
         ))
-    except ValueError as e:  # encabezados inválidos, demasiado grande, etc.
+    except ValueError as e:
         _raise("VALIDATION_ERROR", str(e), 422)
-
 
 @router.get("", response_model=DestinatarioListResponse)
 async def list_recipients(
@@ -109,7 +97,6 @@ async def list_recipients(
     return DestinatarioListResponse(
         total=total, items=[_response(d) for d in items], limit=limit, offset=offset
     )
-
 
 @router.get("/{destinatario_id}", response_model=DestinatarioDetailResponse)
 async def get_recipient(
@@ -130,7 +117,6 @@ async def get_recipient(
             for i in historico
         ],
     )
-
 
 @router.patch("/{destinatario_id}", response_model=DestinatarioResponse)
 async def patch_recipient(
@@ -157,7 +143,6 @@ async def patch_recipient(
             _raise("DUPLICATE", str(e), 409)
         _raise("VALIDATION_ERROR", str(e), 422)
     return _response(d)
-
 
 @router.patch("/{destinatario_id}/deactivate", response_model=DestinatarioResponse)
 async def deactivate_recipient(

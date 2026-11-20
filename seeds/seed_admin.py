@@ -1,4 +1,3 @@
-"""Crea el único admin_plataforma si no existe. Lee de .env. Uso: `python -m seeds.seed_admin`."""
 import asyncio
 import sys
 
@@ -12,7 +11,6 @@ from app.db.session import SessionLocal
 from app.models.historial import HistorialContrasenas
 from app.models.usuario import Usuario
 from app.services.password_service import validate_password
-
 
 async def main():
     s = get_settings()
@@ -33,7 +31,6 @@ async def main():
         db.add(HistorialContrasenas(usuario_id=user.id_usuarios, hash_contrasena=h))
         await db.commit()
         print(f"admin_plataforma creado: {email} (estado pendiente_2fa, debe enrolar TOTP)")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

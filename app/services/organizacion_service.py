@@ -1,9 +1,3 @@
-"""Lógica de negocio de /organizations (§4.3 + decisión #7: admin_plataforma lista todas con métricas).
-
-POST /organizations acepta `correo_admin` opcional: crea la org y su primer admin_organizacion
-con contraseña temporal + cambio forzado en el primer login (mismo mecanismo que la invitación
-de analistas, decisión #11). Así una org creada por admin_plataforma queda operativa de inmediato.
-"""
 import secrets
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,7 +37,7 @@ async def create_org(
             hash_contrasena=hash_password(contrasena),
             estado="pendiente_2fa",
             activo=True,
-            debe_cambiar_contrasena=True,  # cambio forzado en el primer login (decisión #11)
+            debe_cambiar_contrasena=True,
         )
         await user_repo.add_user(db, admin)
         await user_repo.add_history(db, admin.id_usuarios, admin.hash_contrasena)
@@ -75,7 +69,6 @@ async def create_org(
 
     log_event("org_created", request_id=request_id, org_id=str(org.id_organizaciones), admin_created=bool(correo_admin))
     return {"org": org, "admin": admin, "correo_enviado": correo_enviado}
-
 
 async def patch_org(db: AsyncSession, org: Organizacion, nombre: str | None, slug: str | None, actor: Usuario, request_id: str) -> Organizacion:
     if slug and slug != org.slug:

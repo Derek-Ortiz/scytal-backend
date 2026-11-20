@@ -1,10 +1,3 @@
-"""Pruebas de integración /campaigns (§4.8): flujo completo con embudo, expiración editable en
-activa, canales QR con zonas obligatorias, cancelación que mata tokens, relanzado que reinicia
-(sin arrastrar métricas del ciclo anterior), finalización con instantáneas/alertas y feedback único.
-
-El SMTP se reemplaza por un lote falso (monkeypatch en campana_service._enviar_lote); las
-interacciones se simulan con escrituras directas en BD (las rutas /track reales son Fase 4).
-"""
 import re
 import uuid as _uuid
 from datetime import datetime, timezone
@@ -15,9 +8,8 @@ from sqlalchemy import select, update
 pytestmark = pytest.mark.integration
 
 from app.services import campana_service
-from tests.integration.test_groups import _crear_analista, _crear_grupo, _org_con_token  # noqa: E402
-from tests.integration.test_templates import _crear_plantilla  # noqa: E402
-
+from tests.integration.test_groups import _crear_analista, _crear_grupo, _org_con_token
+from tests.integration.test_templates import _crear_plantilla
 
 @pytest.fixture
 def correo_falso(monkeypatch):
@@ -31,14 +23,12 @@ def correo_falso(monkeypatch):
     monkeypatch.setattr(campana_service, "_enviar_lote", _falso)
     return enviados
 
-
 async def _agregar_destinatario(client, tok: str, grupo_id: str, correo: str) -> dict:
     r = await client.post(
         "/recipients", headers={"Authorization": f"Bearer {tok}"}, json={"correo": correo, "grupo_id": grupo_id}
     )
     assert r.status_code == 201, r.text
     return r.json()
-
 
 async def _crear_campana(client, tok: str, grupo_id: str, plantilla_id: str | None = None, **extra) -> dict:
     datos = {"nombre": f"Campaña {_uuid.uuid4().hex[:6]}", "grupo_id": grupo_id, "expiracion_horas": 24}
@@ -48,7 +38,6 @@ async def _crear_campana(client, tok: str, grupo_id: str, plantilla_id: str | No
     r = await client.post("/campaigns", headers={"Authorization": f"Bearer {tok}"}, json=datos)
     assert r.status_code == 201, r.text
     return r.json()
-
 
 async def _fila_token(campana_id: str, correo: str):
     from app.db.session import SessionLocal
@@ -62,7 +51,6 @@ async def _fila_token(campana_id: str, correo: str):
             .where(DestinatarioCampana.campana_id == _uuid.UUID(campana_id), Destinatario.correo == correo)
         )
         return res.scalar_one()
-
 
 async def _simular(campana_id: str, correo: str, *, abrio=False, clico=False, subio=False):
     """Escrituras directas: mismas columnas/eventos que escribirá /track en Fase 4."""
@@ -90,7 +78,6 @@ async def _simular(campana_id: str, correo: str, *, abrio=False, clico=False, su
             ))
         await db.commit()
 
-
 def _tokens_de(correo_falso_lotes) -> list[str]:
     toks = []
     for lote in correo_falso_lotes:
@@ -99,7 +86,6 @@ def _tokens_de(correo_falso_lotes) -> list[str]:
             if m:
                 toks.append(m.group(1))
     return toks
-
 
 @pytest.mark.asyncio
 async def test_campana_flujo_completo(client, integration_guard, correo_falso):
@@ -111,48 +97,40 @@ async def test_campana_flujo_completo(client, integration_guard, correo_falso):
     d2 = await _agregar_destinatario(client, tok, g["id_grupos"], "beto@corp.local")
     d3 = await _agregar_destinatario(client, tok, g["id_grupos"], "carla@corp.local")
 
-    # Crear en pendiente
     c = await _crear_campana(client, tok, g["id_grupos"], p["id_plantillas"], expiracion_horas=24)
     cid = c["id_campanas"]
     assert c["estado"] == "pendiente" and c["expiracion_horas"] == 24 and c["canales"] == []
 
-    # Launch sin canales → 422; sin plantilla → 422
     r = await client.post(f"/campaigns/{cid}/launch", headers=headers)
     assert r.status_code == 422, r.text
     c2 = await _crear_campana(client, tok, g["id_grupos"], plantilla_id=None)
     r = await client.post(f"/campaigns/{c2['id_campanas']}/launch", headers=headers)
     assert r.status_code == 422, r.text
 
-    # Canales en pendiente
     r = await client.post(f"/campaigns/{cid}/channels", headers=headers, json={"canales": ["correo"]})
     assert r.status_code == 200 and r.json()["canales"] == [{"canal": "correo", "zonas": []}]
 
-    # PATCH en pendiente: todo editable
     r = await client.patch(f"/campaigns/{cid}", headers=headers, json={"nombre": "Fase Q4", "expiracion_horas": 48})
     assert r.status_code == 200 and r.json()["nombre"] == "Fase Q4" and r.json()["expiracion_horas"] == 48
 
-    # Launch
     r = await client.post(f"/campaigns/{cid}/launch", headers=headers)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["campana"]["estado"] == "activa" and body["emails_programados"] == 3
     assert body["campana"]["iniciada_en"] is not None
-    assert len(correo_falso) == 1  # un lote
+    assert len(correo_falso) == 1
     tokens = _tokens_de(correo_falso)
-    assert len(tokens) == 3 and len(set(tokens)) == 3  # token único por destinatario
+    assert len(tokens) == 3 and len(set(tokens)) == 3
 
-    # Tabla: todos enviados, nadie interactuó
     r = await client.get(f"/campaigns/{cid}/recipients", headers=headers)
     filas = {f["correo"]: f for f in r.json()["items"]}
     assert all(filas[k]["enviado"] for k in filas) and all(filas[k]["vencido"] is False for k in filas)
     assert all(filas[k]["abrio"] is False for k in filas)
 
-    # Stats en ceros
     r = await client.get(f"/campaigns/{cid}/stats", headers=headers)
     s = r.json()
     assert (s["total_destinatarios"], s["enviados"], s["abiertos"], s["clics"], s["subidos"], s["qr_clics"]) == (3, 3, 0, 0, 0, 0)
 
-    # PATCH en activa: solo expiracion_horas
     r = await client.patch(f"/campaigns/{cid}", headers=headers, json={"nombre": "hack"})
     assert r.status_code == 409 and r.json()["error"]["code"] == "CONFLICT"
     r = await client.patch(f"/campaigns/{cid}", headers=headers, json={})
@@ -162,23 +140,20 @@ async def test_campana_flujo_completo(client, integration_guard, correo_falso):
     r = await client.patch(f"/campaigns/{cid}", headers=headers, json={"expiracion_horas": 96})
     assert r.status_code == 200 and r.json()["expiracion_horas"] == 96
 
-    # Relanzar mientras activa → 409
     r = await client.post(f"/campaigns/{cid}/launch", headers=headers)
     assert r.status_code == 409
 
-    # Interacciones simuladas: ana abre; beto clica y envía datos; carla ignora todo
     await _simular(cid, "ana@corp.local", abrio=True)
     await _simular(cid, "beto@corp.local", clico=True, subio=True)
     r = await client.get(f"/campaigns/{cid}/stats", headers=headers)
     s = r.json()
     assert (s["abiertos"], s["clics"], s["subidos"]) == (1, 1, 1)
 
-    # Finish
     r = await client.post(f"/campaigns/{cid}/finish", headers=headers)
     assert r.status_code == 200, r.text
     fin = r.json()
     assert fin["campana"]["estado"] == "completada" and fin["campana"]["finalizada_en"] is not None
-    assert fin["instantaneas"] == 3 and fin["alertas"] == 1  # solo beto envió datos
+    assert fin["instantaneas"] == 3 and fin["alertas"] == 1
 
     r = await client.get(f"/campaigns/{cid}/recipients", headers=headers)
     filas = {f["correo"]: f for f in r.json()["items"]}
@@ -186,16 +161,13 @@ async def test_campana_flujo_completo(client, integration_guard, correo_falso):
     assert filas["beto@corp.local"]["puntaje_phishing"] == 25.0 and filas["beto@corp.local"]["nivel"] == "critico"
     assert filas["carla@corp.local"]["puntaje_phishing"] == 100.0 and filas["carla@corp.local"]["nivel"] == "alto"
 
-    # El índice del grupo refleja el promedio del último puntaje
     r = await client.get(f"/groups/{g['id_grupos']}", headers=headers)
     prom = r.json()["metricas"]["indice_promedio"]
     assert prom is not None and abs(prom - (75 + 25 + 100) / 3) < 0.01
 
-    # Finish doble → 409
     r = await client.post(f"/campaigns/{cid}/finish", headers=headers)
     assert r.status_code == 409
 
-    # Feedback: una sola vez
     r = await client.post(f"/campaigns/{cid}/send-feedback", headers=headers)
     assert r.status_code == 200 and r.json()["emails_programados"] == 3
     assert len(correo_falso[-1]) == 3 and "índice de resistencia" in correo_falso[-1][0][2]
@@ -204,7 +176,6 @@ async def test_campana_flujo_completo(client, integration_guard, correo_falso):
     r = await client.post(f"/campaigns/{cid}/send-feedback", headers=headers)
     assert r.status_code == 409
 
-    # Relanzar una completada: reinicia tokens/contadores y NO arrastra el 'subido' anterior
     r = await client.post(f"/campaigns/{cid}/launch", headers=headers)
     assert r.status_code == 200, r.text
     assert r.json()["campana"]["estado"] == "activa"
@@ -213,15 +184,13 @@ async def test_campana_flujo_completo(client, integration_guard, correo_falso):
     assert (s["enviados"], s["abiertos"], s["clics"], s["subidos"]) == (3, 0, 0, 0)
     r = await client.get(f"/campaigns/{cid}/recipients", headers=headers)
     filas = {f["correo"]: f for f in r.json()["items"]}
-    assert filas["ana@corp.local"]["abrio"] is False  # contadores a cero
-    assert filas["ana@corp.local"]["puntaje_phishing"] == 75.0  # el histórico del ciclo anterior queda
+    assert filas["ana@corp.local"]["abrio"] is False
+    assert filas["ana@corp.local"]["puntaje_phishing"] == 75.0
 
-    # Feedback en activa → 409; segundo finish: nadie interactuó → todos 100/alto, 0 alertas nuevas
     r = await client.post(f"/campaigns/{cid}/send-feedback", headers=headers)
     assert r.status_code == 409
     r = await client.post(f"/campaigns/{cid}/finish", headers=headers)
     assert r.status_code == 200 and r.json()["instantaneas"] == 3 and r.json()["alertas"] == 0
-
 
 @pytest.mark.asyncio
 async def test_campana_qr_zonas_cancel_y_relanzamiento(client, integration_guard, correo_falso):
@@ -234,13 +203,11 @@ async def test_campana_qr_zonas_cancel_y_relanzamiento(client, integration_guard
     c = await _crear_campana(client, tok, g["id_grupos"], p["id_plantillas"])
     cid = c["id_campanas"]
 
-    # QR sin zonas → 422; zonas sin canal qr → 422
     r = await client.post(f"/campaigns/{cid}/channels", headers=headers, json={"canales": ["qr"]})
     assert r.status_code == 422, r.text
     r = await client.post(f"/campaigns/{cid}/channels", headers=headers, json={"canales": ["correo"], "zonas": ["Recepción"]})
     assert r.status_code == 422
 
-    # Canales válidos con zonas (reemplaza el set en cada POST)
     r = await client.post(
         f"/campaigns/{cid}/channels", headers=headers, json={"canales": ["qr", "correo"], "zonas": ["Recepción", "Comedor"]}
     )
@@ -249,19 +216,16 @@ async def test_campana_qr_zonas_cancel_y_relanzamiento(client, integration_guard
         {"canal": "correo", "zonas": []}, {"canal": "qr", "zonas": ["Recepción", "Comedor"]},
     ]
 
-    # Render QR: 2 zonas con PNG base64 y URL pública
     r = await client.get(f"/campaigns/{cid}/qr", headers=headers)
     assert r.status_code == 200, r.text
     zonas = r.json()["zonas"]
     assert [z["zona"] for z in zonas] == ["Recepción", "Comedor"]
     assert all(z["url"].startswith("http") and "/track/click?t=" in z["url"] for z in zonas)
-    assert all(z["qr_base64"].startswith("iVBOR") for z in zonas)  # PNG
+    assert all(z["qr_base64"].startswith("iVBOR") for z in zonas)
 
-    # Launch con correo+qr: solo 2 correos (el QR es anónimo, no se envía por email)
     r = await client.post(f"/campaigns/{cid}/launch", headers=headers)
     assert r.status_code == 200 and r.json()["emails_programados"] == 2 and r.json()["zonas_qr"] == 2
 
-    # Cancel: mata los tokens AL INSTANTE
     r = await client.post(f"/campaigns/{cid}/cancel", headers=headers)
     assert r.status_code == 200 and r.json()["estado"] == "cancelada"
     for correo in ("obrero1@planta.local", "obrero2@planta.local"):
@@ -276,7 +240,6 @@ async def test_campana_qr_zonas_cancel_y_relanzamiento(client, integration_guard
             assert f.expira_en <= datetime.now(timezone.utc)
             assert f.expira_en.tzinfo is not None
 
-    # Relanzar una cancelada: vuelve a activa con tokens vivos y zonas conservadas
     r = await client.post(f"/campaigns/{cid}/launch", headers=headers, json={"expiracion_horas": 12})
     assert r.status_code == 200, r.text
     assert r.json()["campana"]["estado"] == "activa"
@@ -288,10 +251,8 @@ async def test_campana_qr_zonas_cancel_y_relanzamiento(client, integration_guard
         f = (await db.execute(
             select(DestinatarioCampana).where(DestinatarioCampana.id_destinatarios_campana == fila.id_destinatarios_campana)
         )).scalar_one()
-        assert f.expira_en > datetime.now(timezone.utc)  # token revivido con la nueva expiración
+        assert f.expira_en > datetime.now(timezone.utc)
 
-    # Cancelar la relanzada (activa) es válido; una pendiente sin tokens también se cancela;
-    # cancelar una cancelada → 409
     r = await client.post(f"/campaigns/{cid}/cancel", headers=headers)
     assert r.status_code == 200 and r.json()["estado"] == "cancelada"
     c2 = await _crear_campana(client, tok, g["id_grupos"], p["id_plantillas"])
@@ -300,7 +261,6 @@ async def test_campana_qr_zonas_cancel_y_relanzamiento(client, integration_guard
     r = await client.post(f"/campaigns/{c2['id_campanas']}/cancel", headers=headers)
     assert r.status_code == 409
 
-    # Clic QR anónimo (escritura directa en la zona, lo hará /track en Fase 4) → qr_clics aparte
     from app.models.qr_zona import CampanaQrZona
 
     async with SessionLocal() as db:
@@ -312,8 +272,7 @@ async def test_campana_qr_zonas_cancel_y_relanzamiento(client, integration_guard
         await db.commit()
     r = await client.get(f"/campaigns/{cid}/stats", headers=headers)
     s = r.json()
-    assert s["qr_clics"] == 1 and s["abiertos"] == 0 and s["clics"] == 0  # NO entra al embudo
-
+    assert s["qr_clics"] == 1 and s["abiertos"] == 0 and s["clics"] == 0
 
 @pytest.mark.asyncio
 async def test_campana_permisos_y_multitenant(client, integration_guard):
@@ -322,7 +281,6 @@ async def test_campana_permisos_y_multitenant(client, integration_guard):
     g = await _crear_grupo(client, tok_a, "Ventas")
     c = await _crear_campana(client, tok_a, g["id_grupos"])
 
-    # Analista de la misma org: lee, no escribe
     _, tok_analista = await _crear_analista(client, reg_a["org_id"])
     h_a = {"Authorization": f"Bearer {tok_analista}"}
     r = await client.get(f"/campaigns/{c['id_campanas']}", headers=h_a)
@@ -338,7 +296,6 @@ async def test_campana_permisos_y_multitenant(client, integration_guard):
         r = await getattr(client, metodo)(path, headers=h_a, json=json_body)
         assert r.status_code == 403, f"{metodo} {path}"
 
-    # Org B no ve la campaña de A (404)
     _, tok_b = await _org_con_token(client, "campb")
     h_b = {"Authorization": f"Bearer {tok_b}"}
     r = await client.get("/campaigns", headers=h_b)
@@ -350,7 +307,6 @@ async def test_campana_permisos_y_multitenant(client, integration_guard):
         r = await client.get(path, headers=h_b)
         assert r.status_code == 404, path
 
-    # Filtros del listado
     r = await client.get("/campaigns", headers=headers_a, params={"estado": "pendiente"})
     assert r.status_code == 200 and r.json()["total"] == 1
     r = await client.get("/campaigns", headers=headers_a, params={"estado": "activa"})
@@ -359,7 +315,6 @@ async def test_campana_permisos_y_multitenant(client, integration_guard):
     assert r.status_code == 422
     r = await client.get("/campaigns", headers=headers_a, params={"grupo_id": g["id_grupos"]})
     assert r.json()["total"] == 1
-
 
 @pytest.mark.asyncio
 async def test_campana_launch_exige_destinatarios_activos(client, integration_guard, correo_falso):
@@ -374,7 +329,6 @@ async def test_campana_launch_exige_destinatarios_activos(client, integration_gu
     assert r.status_code == 422, r.text
     assert "destinatarios activos" in r.json()["error"]["message"]
 
-    # destinatario creado y luego desactivado tampoco habilita el launch (borrado lógico)
     d = await _agregar_destinatario(client, tok, g["id_grupos"], "solito@x.local")
     r = await client.patch(f"/recipients/{d['id_destinatarios']}/deactivate", headers=headers)
     assert r.status_code == 200, r.text

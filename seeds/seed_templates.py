@@ -1,13 +1,3 @@
-"""Crea las 3 plantillas globales (idempotente). Uso: `python -m seeds.seed_templates`.
-
-- Login genérico (perfil corporativo)
-- Clon Facebook (perfil redes_sociales)
-- Clon Instagram (perfil redes_sociales)
-
-Los HTML usan los marcadores {{enlace}} y {{pixel}} (los sustituye render_correo al lanzar).
-Toda landing incluye la leyenda obligatoria "PÁGINA DE PRUEBA" (plantilla_service la añadiría
-si faltara; aquí ya va incluida). org_id NULL = plantilla global, visible para todas las orgs.
-"""
 import asyncio
 import sys
 
@@ -124,7 +114,6 @@ PLANTILLAS = [
     },
 ]
 
-
 async def main():
     async with SessionLocal() as db:
         creadas = 0
@@ -144,7 +133,6 @@ async def main():
         if creadas:
             await db.commit()
         print(f"seed_templates: {creadas} plantilla(s) creada(s), {len(PLANTILLAS) - creadas} ya existían.")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

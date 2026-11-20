@@ -1,4 +1,3 @@
-"""Schemas de /users (§4.4): listar, invitar analista, cambiar rol, desactivar."""
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -6,7 +5,6 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.auth import CorreoStr, _norm_email
-
 
 class UsuarioResponse(BaseModel):
     id_usuarios: uuid.UUID
@@ -16,13 +14,11 @@ class UsuarioResponse(BaseModel):
     activo: bool
     creado_en: datetime
 
-
 class UsuarioListResponse(BaseModel):
     total: int
     items: list[UsuarioResponse]
     limit: int
     offset: int
-
 
 class InviteRequest(BaseModel):
     """Invitación de analista a la propia organización (rol fijo por §5: nunca admin vía esta ruta)."""
@@ -30,17 +26,15 @@ class InviteRequest(BaseModel):
 
     _norm = field_validator("correo", mode="before")(_norm_email)
 
-
 class InviteResponse(BaseModel):
     id_usuarios: uuid.UUID
     correo: str
     rol: str
     estado: str
-    correo_enviado: bool  # False → el SMTP falló; se registró en log y el admin puede reinvitar
-
+    correo_enviado: bool  
 
 class RoleChangeRequest(BaseModel):
-    rol: str  # 'analista' | 'admin_organizacion' — admin_plataforma se rechaza en validación
+    rol: str 
 
     @field_validator("rol")
     @classmethod
@@ -49,7 +43,6 @@ class RoleChangeRequest(BaseModel):
         if v not in ("analista", "admin_organizacion"):
             raise ValueError("rol debe ser 'analista' o 'admin_organizacion'")
         return v
-
 
 class PaginacionParams(BaseModel):
     limit: int = Field(default=20, ge=1, le=100)

@@ -1,12 +1,3 @@
-"""Lógica de /templates (§4.7).
-
-- Leyenda obligatoria (decisión): toda landing lleva la marca "PÁGINA DE PRUEBA"; el servicio
-  la añade al final si el HTML no la trae. No se permiten landings sin aviso.
-- Plantillas globales (org_id NULL): las lee toda organización, solo su dueña las edita
-  (el router responde 403 para las ajenas).
-- DELETE bloqueado si una campaña pendiente/programada/activa la referencia (→ 409);
-  campañas viejas la sueltan con ON DELETE SET NULL.
-"""
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,13 +16,11 @@ LEYENDA_HTML = (
     'Ninguna credencial fue enviada a un servicio real.</div>'
 )
 
-
 def aplicar_leyenda(landing_html: str) -> str:
     """Añade la leyenda al final si el HTML no la trae ya (case-insensitive)."""
     if LEYENDA.lower() in landing_html.lower():
         return landing_html
     return landing_html + LEYENDA_HTML
-
 
 async def create_plantilla(
     db: AsyncSession, org_id: uuid.UUID, nombre: str, perfil: str, canal: str,
@@ -50,7 +39,6 @@ async def create_plantilla(
     log_event("template_created", request_id=request_id, plantilla_id=str(p.id_plantillas), org_id=str(org_id))
     return p
 
-
 async def update_plantilla(
     db: AsyncSession, plantilla: Plantilla,
     nombre: str | None, perfil: str | None, canal: str | None,
@@ -65,7 +53,6 @@ async def update_plantilla(
     - la landing editada siempre termina con la leyenda obligatoria.
     """
     if plantilla.org_id is None:
-        # defensa extra: las globales no se editan desde aquí (el router ya responde 403)
         raise PermissionError("una plantilla global no se puede editar desde una organización")
 
     canal_final = canal or plantilla.canal
@@ -86,7 +73,6 @@ async def update_plantilla(
     await db.commit()
     log_event("template_updated", request_id=request_id, plantilla_id=str(p.id_plantillas))
     return p
-
 
 async def delete_plantilla(db: AsyncSession, plantilla: Plantilla, actor: Usuario, request_id: str) -> None:
     """DELETE solo si ninguna campaña pendiente/programada/activa la referencia (§4.7 → 409)."""

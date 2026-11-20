@@ -10,7 +10,6 @@ from app.db.base import Base
 
 TIPO_EVENTO = ("abierto", "click", "subido")
 
-
 class EventoTracking(Base):
     __tablename__ = "eventos_tracking"
 

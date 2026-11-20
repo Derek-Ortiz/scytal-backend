@@ -1,12 +1,3 @@
-"""Lógica de negocio de /recipients (§4.6), incluida la importación por CSV.
-
-CSV (decisión de diseño, documentada en prompt_frontend.md):
-- Encabezados obligatorios en la primera línea: `correo,grupo` (grupo por NOMBRE, debe existir en la organización).
-- Correo validado con el mismo regex estricto de /auth (CORREO_RE).
-- Dedupe dentro del archivo y contra la organización (activos e inactivos: uk_destinatarios_org_correo).
-- Filas inválidas se reportan con número de línea (máx 100 en el detalle).
-- Borrado lógico (decisión #9): desactivar conserva el registro y su histórico.
-"""
 import csv
 import io
 import uuid
@@ -22,19 +13,17 @@ from app.repositories import destinatario_repository as dest_repo
 from app.repositories import usuario_repository as user_repo
 from app.schemas.auth import CORREO_RE
 
-MAX_FILAS_CSV = 5000          # guarda anti-DoS: un CSV enorme no puede bloquear el worker
-MAX_ERRORES_REPORTE = 100     # detalle de errores que se devuelve al cliente
-
+MAX_FILAS_CSV = 5000
+MAX_ERRORES_REPORTE = 100
 
 @dataclass
 class CSVParseResult:
     """Resultado del parseo puro del CSV (sin BD)."""
-    validos: list[tuple[str, uuid.UUID]] = field(default_factory=list)   # (correo_min, grupo_id)
+    validos: list[tuple[str, uuid.UUID]] = field(default_factory=list)
     errores: list[str] = field(default_factory=list)
     total_filas: int = 0
     invalidos: int = 0
     duplicados_in_file: int = 0
-
 
 def parse_csv_import(contenido: str, grupos: dict[str, uuid.UUID]) -> CSVParseResult:
     """Parseo y validación PURA del CSV — sin BD, para pruebas unitarias.
@@ -47,7 +36,7 @@ def parse_csv_import(contenido: str, grupos: dict[str, uuid.UUID]) -> CSVParseRe
 
     filas = [f for f in lector]
     while filas and not any(c.strip() for c in filas[-1]):
-        filas.pop()  # quita líneas vacías al final
+        filas.pop()
 
     if not filas:
         raise ValueError("el archivo está vacío: se esperaba el encabezado 'correo,grupo'")
@@ -59,7 +48,7 @@ def parse_csv_import(contenido: str, grupos: dict[str, uuid.UUID]) -> CSVParseRe
     vistos: set[str] = set()
     for i, fila in enumerate(filas[1:], start=2):
         if not any(c.strip() for c in fila):
-            continue  # línea vacía intermedia: se ignora
+            continue
         resultado.total_filas += 1
         if resultado.total_filas > MAX_FILAS_CSV:
             raise ValueError(f"demasiadas filas: el máximo es {MAX_FILAS_CSV}")
@@ -90,11 +79,9 @@ def parse_csv_import(contenido: str, grupos: dict[str, uuid.UUID]) -> CSVParseRe
 
     return resultado
 
-
 def _agregar(resultado: CSVParseResult, detalle: str) -> None:
     if len(resultado.errores) < MAX_ERRORES_REPORTE:
         resultado.errores.append(detalle)
-
 
 async def import_csv(
     db: AsyncSession, org_id: uuid.UUID, contenido: str, actor: Usuario, request_id: str
@@ -103,7 +90,6 @@ async def import_csv(
     grupos = await dest_repo.grupos_por_nombre(db, org_id)
     parseo = parse_csv_import(contenido, grupos)
 
-    # Dedupe contra la org (activos e inactivos)
     correos_validos = [c for c, _ in parseo.validos]
     existentes = await dest_repo.correos_existentes(db, org_id, correos_validos)
 
@@ -137,7 +123,6 @@ async def import_csv(
         "errores": parseo.errores,
     }
 
-
 async def create_destinatario(
     db: AsyncSession, org_id: uuid.UUID, grupo: Grupo, correo: str, actor: Usuario, request_id: str
 ) -> Destinatario:
@@ -151,7 +136,6 @@ async def create_destinatario(
     await db.commit()
     log_event("recipient_created", request_id=request_id, destinatario_id=str(d.id_destinatarios))
     return d
-
 
 async def update_destinatario(
     db: AsyncSession,
@@ -172,7 +156,6 @@ async def update_destinatario(
     await db.commit()
     log_event("recipient_updated", request_id=request_id, destinatario_id=str(d.id_destinatarios))
     return d
-
 
 async def deactivate_destinatario(db: AsyncSession, d: Destinatario, actor: Usuario, request_id: str) -> Destinatario:
     """Borrado lógico (decisión #9): conserva datos e histórico sin anonimizar."""

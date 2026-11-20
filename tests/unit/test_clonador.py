@@ -1,29 +1,24 @@
-"""Pruebas unitarias del importador de plantillas por URL (Opción A + B, sin BD ni red)."""
 import pytest
 
 from app.services import clonador_service as cs
 
-
-# ---- Guardas SSRF ----
-
 @pytest.mark.parametrize("ip,esperado", [
-    ("127.0.0.1", True),            # loopback
+    ("127.0.0.1", True),
     ("::1", True),
-    ("10.1.2.3", True),             # privada
+    ("10.1.2.3", True),
     ("192.168.0.20", True),
     ("172.16.9.9", True),
-    ("169.254.169.254", True),      # metadata de nubes (AWS/GCP/Azure)
-    ("fe80::1", True),              # link-local
-    ("224.0.0.1", True),            # multicast
-    ("192.0.2.1", True),            # TEST-NET reservado (no global)
+    ("169.254.169.254", True),
+    ("fe80::1", True),
+    ("224.0.0.1", True),
+    ("192.0.2.1", True),
     ("8.8.8.8", False),
     ("93.184.216.34", False),
     ("2606:4700:4700::1111", False),
-    ("no-es-ip", True),             # inválida → bloquear por defecto
+    ("no-es-ip", True),
 ])
 def test_ip_bloqueada(ip, esperado):
     assert cs._ip_bloqueada(ip) is esperado
-
 
 def test_url_valida_esquemas():
     with pytest.raises(ValueError):
@@ -35,15 +30,11 @@ def test_url_valida_esquemas():
     p = cs._url_valida("https://portal.empresa.com/login?next=/home")
     assert p.scheme == "https" and p.hostname == "portal.empresa.com"
 
-
-# ---- Detección de carcasa SPA (decide Opción A vs Opción B) ----
-
 def test_necesita_render_false_con_contenido_real():
     html = ("<html><body><h1>Banco Ejemplo</h1><form><input type='password' name='pw'>"
             "<button>Entrar</button></form><p>Portal de empleados, use su clave de red.</p>"
             "</body></html>")
     assert cs.necesita_render(html) is False
-
 
 def test_necesita_render_true_para_shell_react():
     shell = ("<html><head><script src='/static/js/main.a1.js'></script>"
@@ -51,13 +42,9 @@ def test_necesita_render_true_para_shell_react():
              "<body><div id='root'></div></body></html>")
     assert cs.necesita_render(shell) is True
 
-
 def test_necesita_render_true_para_next():
     shell = "<html><body><div id='__next'></div><script src='/_next/static.js'></script></body></html>"
     assert cs.necesita_render(shell) is True
-
-
-# ---- procesar_html: el corazón de la Opción A ----
 
 PAGINA = (
     '<html><head><title>Login</title>'
@@ -78,11 +65,9 @@ PAGINA = (
     '</body></html>'
 )
 
-
 @pytest.fixture
 def procesada() -> str:
     return cs.procesar_html(PAGINA, "https://original.com/login")
-
 
 def test_elimina_scripts_iframes_base_y_meta_peligrosos(procesada):
     assert "<script" not in procesada
@@ -91,55 +76,45 @@ def test_elimina_scripts_iframes_base_y_meta_peligrosos(procesada):
     assert "Content-Security-Policy" not in procesada
     assert "http-equiv=\"refresh\"" not in procesada
 
-
 def test_elimina_atributos_on_y_javascript(procesada):
     assert "onerror" not in procesada and "onclick" not in procesada
     assert "javascript:click_robo()" not in procesada
-    assert 'href="#"' in procesada  # el enlace trampa queda neutralizado
-
+    assert 'href="#"' in procesada
 
 def test_absolutiza_recursos_contra_url_final(procesada):
     assert 'src="https://original.com/img/logo.png"' in procesada
     assert 'href="https://original.com/css/estilos.css"' in procesada
-    assert 'url(https://original.com/img/fondo.png)' in procesada  # CSS <style> inline
+    assert 'url(https://original.com/img/fondo.png)' in procesada
     assert 'href="https://original.com/recuperar"' in procesada
-
 
 def test_forms_apuntan_a_track_submit(procesada):
     assert 'action="/track/submit"' in procesada
     assert 'method="post"' in procesada
     assert 'action="/signin"' not in procesada
 
-
 def test_leyenda_con_leyenda_true():
     out = cs.procesar_html(PAGINA, "https://original.com/login", leyenda=True)
     assert "PÁGINA DE PRUEBA" in out
 
-
 def test_imports_sin_leyenda_por_ahora():
-    # temporal: la leyenda está desactivada en imports para validar la previsualización
     out = cs.procesar_html(PAGINA, "https://original.com/login")
     assert "PÁGINA DE PRUEBA" not in out
-
 
 def test_inyecta_form_minimo_si_no_hay_password():
     html = "<html><body><h1>Solo texto informativo</h1></body></html>"
     out = cs.procesar_html(html, "https://x.com/")
     assert out.count('action="/track/submit"') == 1
-    assert 'type="password"' in out  # el form mínimo captura credenciales
-
+    assert 'type="password"' in out
 
 def test_no_duplica_leyenda_si_la_trae():
     html = "<html><body><p>página de prueba</p><form><input type='password'></form></body></html>"
     out = cs.procesar_html(html, "https://x.com/", leyenda=True)
     total = out.lower().count("página de prueba")
-    assert total == 1  # case-insensitive: no se añade una segunda
-
+    assert total == 1
 
 def test_fragmento_sin_body_no_explota():
     out = cs.procesar_html("<p>hola <script>malo()</script></p>", "https://x.com/", leyenda=True)
     assert "<script" not in out and "PÁGINA DE PRUEBA" in out
-
 
 def test_absolutiza_srcset():
     html = ('<html><body><img srcset="/img/a.png 1x, /img/b.png 2x" '
@@ -148,19 +123,11 @@ def test_absolutiza_srcset():
     assert "https://x.com/img/a.png 1x" in out and "https://x.com/img/b.png 2x" in out
     assert "https://x.com/img/c.png 1x" in out and "https://cdn.com/d.png 2x" in out
 
-
-# ---- Asunto/contenido generados para la plantilla importada ----
-
 def test_dominio_de_url():
     assert cs._dominio("https://portal.banco.com/login?x=1") == "portal.banco.com"
 
-
 def test_marcadores_del_correo_importado():
-    # el cuerpo de correo generado debe traer {{enlace}} y {{pixel}}
     assert "{{enlace}}" in cs.CONTENIDO_IMPORTADO and "{{pixel}}" in cs.CONTENIDO_IMPORTADO
-
-
-# ---- inlinar_css: snapshot autocontenido (red simulada, sin BD) ----
 
 def _red_css(monkeypatch, hojas: dict, tipo: str = "text/css"):
     """MockTransport para las hojas CSS + resolver DNS falso (IP pública, sin red real)."""
@@ -180,7 +147,6 @@ def _red_css(monkeypatch, hojas: dict, tipo: str = "text/css"):
         lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=False, timeout=5),
     )
 
-
 @pytest.mark.asyncio
 async def test_inlinea_hoja_externa(monkeypatch):
     _red_css(monkeypatch, {"/css/estilos.css": "body{background:url(/img/f.png)}"})
@@ -188,8 +154,7 @@ async def test_inlinea_hoja_externa(monkeypatch):
     out = await cs.inlinar_css(html, "https://x.com/pag")
     assert "<link" not in out
     assert "<style" in out and "data-fuente" in out
-    assert "https://x.com/img/f.png" in out   # url() absolutizada contra la HOJA
-
+    assert "https://x.com/img/f.png" in out
 
 @pytest.mark.asyncio
 async def test_import_anidado_absolutiza_contra_su_propia_hoja(monkeypatch):
@@ -200,8 +165,7 @@ async def test_import_anidado_absolutiza_contra_su_propia_hoja(monkeypatch):
     html = '<html><head><link rel="stylesheet" href="/css/main.css"></head><body></body></html>'
     out = await cs.inlinar_css(html, "https://x.com/")
     assert "<link" not in out and "@import" not in out
-    assert "https://x.com/css/logo.png" in out  # url() del @import contra /css/tema.css
-
+    assert "https://x.com/css/logo.png" in out
 
 @pytest.mark.asyncio
 async def test_hoja_404_conserva_link(monkeypatch):
@@ -211,7 +175,6 @@ async def test_hoja_404_conserva_link(monkeypatch):
     assert "/css/falta.css" in out
     assert "<style" not in out
 
-
 @pytest.mark.asyncio
 async def test_hoja_no_css_conserva_link(monkeypatch):
     _red_css(monkeypatch, {"/css/x.css": "{}"}, tipo="application/json")
@@ -219,15 +182,12 @@ async def test_hoja_no_css_conserva_link(monkeypatch):
     out = await cs.inlinar_css(html, "https://x.com/")
     assert "<style" not in out and "/css/x.css" in out
 
-
 @pytest.mark.asyncio
 async def test_hoja_con_style_cerrado_no_se_inlinea(monkeypatch):
-    # "</style>" dentro del CSS rompería el HTML: se conserva el <link>
     _red_css(monkeypatch, {"/css/malvado.css": ".a{}</style><script>robo()</script>"})
     html = '<html><head><link rel="stylesheet" href="/css/malvado.css"></head><body></body></html>'
     out = await cs.inlinar_css(html, "https://x.com/")
     assert "<style" not in out and "/css/malvado.css" in out
-
 
 @pytest.mark.asyncio
 async def test_hoja_demasiado_grande_conserva_link(monkeypatch):
@@ -237,10 +197,8 @@ async def test_hoja_demasiado_grande_conserva_link(monkeypatch):
     out = await cs.inlinar_css(html, "https://x.com/")
     assert "<style" not in out and "/css/grande.css" in out
 
-
 @pytest.mark.asyncio
 async def test_presupuesto_total_de_css(monkeypatch):
-    # la hoja A llena el límite por hoja; a B (500,001 bytes) le quedan solo 500,000 → link
     grande = "a{" + "0" * (cs.MAX_CSS_POR_HOJA - 3) + "}"
     media = "b{" + "0" * 499_998 + "}"
     _red_css(monkeypatch, {"/css/a.css": grande, "/css/b.css": media})
@@ -250,11 +208,10 @@ async def test_presupuesto_total_de_css(monkeypatch):
     assert out.count("<style") == 1
     assert media not in out and "/css/b.css" in out
 
-
 def test_css_a_absoluto_puro():
     css = ".a{background:url(logo.png)} .b{background:url(https://cdn.com/x.png)}"
     out = cs._css_a_absoluto(css, "https://x.com/css/tema.css")
-    assert "url(https://x.com/css/logo.png)" in out          # relativa → contra la hoja
-    assert "url(https://cdn.com/x.png)" in out               # absoluta → intacta
+    assert "url(https://x.com/css/logo.png)" in out
+    assert "url(https://cdn.com/x.png)" in out
     assert cs._css_a_absoluto(".c{mask:url(data:image/png;base64,AA)}", "https://x.com/") == \
-        ".c{mask:url(data:image/png;base64,AA)}"             # data: intacta
+        ".c{mask:url(data:image/png;base64,AA)}"

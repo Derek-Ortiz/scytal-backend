@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 
 LOG = logging.getLogger("scytal")
 
-
 class JsonFormatter(logging.Formatter):
     def format(self, record):
         payload = {
@@ -20,7 +19,6 @@ class JsonFormatter(logging.Formatter):
             payload["user_id"] = str(record.user_id)
         return json.dumps(payload, ensure_ascii=False)
 
-
 def setup_logging() -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
@@ -28,7 +26,6 @@ def setup_logging() -> None:
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(logging.INFO)
-
 
 def log_event(msg: str, request_id: str | None = None, **fields) -> None:
     extra = {k: v for k, v in fields.items()}

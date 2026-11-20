@@ -1,4 +1,3 @@
-"""Rutas /users (§4.4). Toda búsqueda por id está acotada a la org del actor (§6.1)."""
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -18,14 +17,11 @@ from app.services import usuario_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
-
 def _raise(code: str, message: str, status_code: int):
     raise HTTPException(status_code=status_code, detail=error_payload(code, message).model_dump())
 
-
 def _user_response(u: Usuario) -> UsuarioResponse:
     return UsuarioResponse(id_usuarios=u.id_usuarios, correo=u.correo, rol=u.rol, estado=u.estado, activo=u.activo, creado_en=u.creado_en)
-
 
 @router.get("", response_model=UsuarioListResponse)
 async def list_users(
@@ -39,7 +35,6 @@ async def list_users(
     total, users = await user_repo.list_by_org(db, org_id, limit, offset)
     return UsuarioListResponse(total=total, items=[_user_response(u) for u in users], limit=limit, offset=offset)
 
-
 @router.post("/invite", response_model=InviteResponse, status_code=status.HTTP_201_CREATED)
 async def invite_user(
     body: InviteRequest,
@@ -50,7 +45,7 @@ async def invite_user(
 ):
     """Invita un analista a la propia organización (§5: por esta vía nunca se crea un admin)."""
     org = await org_repo.find_by_id(db, org_id)
-    if org is None:  # no debería ocurrir: org_id viene del JWT
+    if org is None:
         _raise("NOT_FOUND", "Organización no encontrada", 404)
     try:
         result = await usuario_service.invite_analista(
@@ -67,7 +62,6 @@ async def invite_user(
         estado=result["user"].estado,
         correo_enviado=result["correo_enviado"],
     )
-
 
 @router.patch("/{user_id}/role", response_model=UsuarioResponse)
 async def change_role(
@@ -86,7 +80,6 @@ async def change_role(
     except ValueError as e:
         _raise("VALIDATION_ERROR", str(e), 422)
     return _user_response(target)
-
 
 @router.patch("/{user_id}/deactivate", response_model=UsuarioResponse)
 async def deactivate_user(

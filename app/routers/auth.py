@@ -14,13 +14,10 @@ from app.services import auth_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-
 def _raise(code: str, message: str, status_code: int, headers: dict | None = None):
     raise HTTPException(status_code=status_code, detail=error_payload(code, message).model_dump(), headers=headers)
 
-
 _RETRY_15MIN = {"Retry-After": "900"}
-
 
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
@@ -33,7 +30,6 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
         _raise("INVALID_PASSWORD", msg, 422)
     return RegisterResponse(id_usuarios=user.id_usuarios, correo=user.correo, rol=user.rol, estado=user.estado, org_id=org.id_organizaciones, nombre_organizacion=org.nombre, slug=org.slug)
 
-
 @router.post("/login", response_model=LoginResponse)
 async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     ip = request.client.host if request.client else "unknown"
@@ -43,8 +39,8 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
     result = await auth_service.login(db, body.correo, body.contrasena, ip, request.headers.get("x-request-id", ""))
     if not result.get("ok"):
         _raise("INVALID_CREDENTIALS", "Correo o contraseña incorrectos", 401)
-    # Sin TOTP configurado (cuenta nueva): token provisional para enroll/confirm.
-    # Con TOTP configurado: pending_token de 5 min para verify-totp. Nunca JWT full hasta pasar TOTP.
+
+  
     return LoginResponse(
         requires_totp=result["requires_totp"],
         must_enroll_totp=result["must_enroll_totp"],
@@ -53,12 +49,11 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
         requires_password_change=result["requires_password_change"],
     )
 
-
 @router.post("/login/verify-totp", response_model=TokenResponse)
 async def verify_totp(body: VerifyTotpRequest, request: Request, db: AsyncSession = Depends(get_db)):
     import hashlib
 
-    # Clave por SESIÓN temporal: hash del token completo (los JWT comparten header, el prefijo agruparía todas)
+  
     sesion = hashlib.sha256(body.pending_token.encode()).hexdigest()[:32]
     if not await check_limit(f"rl:totp:{sesion}", limit=5, window_seconds=900):
         _raise("RATE_LIMITED", "Demasiados intentos de TOTP.", 429, headers=_RETRY_15MIN)
@@ -68,7 +63,6 @@ async def verify_totp(body: VerifyTotpRequest, request: Request, db: AsyncSessio
         _raise("INVALID_TOTP", str(e), 401)
     return TokenResponse(**tokens)
 
-
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     try:
@@ -77,19 +71,16 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
         _raise("INVALID_TOKEN", str(e), 401)
     return TokenResponse(**tokens)
 
-
 @router.post("/logout", response_model=ActionResponse)
 async def logout(user: Usuario = Depends(get_current_user_any_state), db: AsyncSession = Depends(get_db)):
     await auth_service.logout(db, user)
     return ActionResponse()
-
 
 @router.post("/totp/enroll", response_model=TotpEnrollResponse)
 async def totp_enroll(user: Usuario = Depends(get_pending_user), db: AsyncSession = Depends(get_db)):
     data = auth_service.enroll_totp(user)
     await db.commit()
     return TotpEnrollResponse(**data)
-
 
 @router.post("/totp/confirm", response_model=ActionResponse)
 async def totp_confirm(body: TotpConfirmRequest, user: Usuario = Depends(get_pending_user), db: AsyncSession = Depends(get_db)):
@@ -98,7 +89,6 @@ async def totp_confirm(body: TotpConfirmRequest, user: Usuario = Depends(get_pen
     except ValueError as e:
         _raise("INVALID_TOTP", str(e), 401)
     return ActionResponse(message="2FA activado")
-
 
 @router.post("/password/change", response_model=ActionResponse)
 async def password_change(body: PasswordChangeRequest, user: Usuario = Depends(get_current_user_any_state), db: AsyncSession = Depends(get_db)):
@@ -110,7 +100,6 @@ async def password_change(body: PasswordChangeRequest, user: Usuario = Depends(g
             _raise("INVALID_CREDENTIALS", msg, 401)
         _raise("INVALID_PASSWORD", msg, 422)
     return ActionResponse(message="Contraseña actualizada")
-
 
 @router.get("/me", response_model=MeResponse)
 async def me(user: Usuario = Depends(get_current_user_any_state)):

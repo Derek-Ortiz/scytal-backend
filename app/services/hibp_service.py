@@ -1,5 +1,3 @@
-"""Servicio mínimo HIBP (§6.4): k-anonimato vía SHA-1 por prefijo de 5 chars con cache Redis."""
-
 import hashlib
 
 import httpx
@@ -8,7 +6,6 @@ import redis.asyncio as redis
 from app.core.config import get_settings
 
 _redis: redis.Redis | None = None
-
 
 def _get_redis() -> redis.Redis | None:
     global _redis
@@ -19,16 +16,13 @@ def _get_redis() -> redis.Redis | None:
             return None
     return _redis
 
-
 LOCAL_COMMON = {
     "password", "password123", "123456", "12345678", "123456789", "qwerty", "qwerty123",
     "admin", "admin123", "letmein", "welcome", "monkey", "dragon", "111111", "123123",
 }
 
-
 def is_locally_common(password: str) -> bool:
     return password.lower() in LOCAL_COMMON
-
 
 async def hibp_count(password: str) -> int:
     """Retorna el conteo de filtraciones, -1 si no se pudo consultar (fail-open en registro suave)."""
@@ -59,7 +53,6 @@ async def hibp_count(password: str) -> int:
         return _count_in(body, suffix)
     except Exception:
         return -1
-
 
 def _count_in(body: str, suffix: str) -> int:
     for line in body.splitlines():

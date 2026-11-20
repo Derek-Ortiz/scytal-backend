@@ -1,11 +1,3 @@
-"""Envío de correo SMTP con reintentos y delay entre mensajes (§4.4, decisión de envío).
-
-- send_email: un correo; reintenta SMTP_RETRY_ATTEMPTS veces con SMTP_RETRY_DELAY_SECONDS entre intentos.
-- send_many: lote con SMTP_BULK_DELAY_SECONDS entre correos (para campañas/feedback, evita bloqueo del SMTP).
-
-Fail-soft: un fallo de correo NUNCA rompe la petición HTTP; se registra en log y se devuelve False
-(el router decide si informarlo al cliente, p. ej. correo_enviado=false en la invitación).
-"""
 import asyncio
 import logging
 from email.message import EmailMessage
@@ -17,7 +9,6 @@ from app.core.logging import log_event
 
 LOG = logging.getLogger("scytal")
 
-
 def _build_message(from_addr: str, to_addr: str, asunto: str, cuerpo_texto: str, cuerpo_html: str | None) -> EmailMessage:
     msg = EmailMessage()
     msg["From"] = from_addr
@@ -27,7 +18,6 @@ def _build_message(from_addr: str, to_addr: str, asunto: str, cuerpo_texto: str,
     if cuerpo_html:
         msg.add_alternative(cuerpo_html, subtype="html")
     return msg
-
 
 async def send_email(
     to_addr: str, asunto: str, cuerpo_texto: str, cuerpo_html: str | None = None, *, request_id: str | None = None
@@ -47,14 +37,13 @@ async def send_email(
             )
             log_event("email_sent", request_id=request_id, to=to_addr, subject=asunto)
             return True
-        except Exception as e:  # noqa: BLE001 — SMTP es externo, cualquier fallo es reintetable
+        except Exception as e:
             last_error = str(e)
             log_event("email_retry", request_id=request_id, to=to_addr, attempt=intento, error=last_error[:200])
             if intento <= s.SMTP_RETRY_ATTEMPTS:
                 await asyncio.sleep(s.SMTP_RETRY_DELAY_SECONDS)
     LOG.error("email_send_failed", extra={"to": to_addr, "subject": asunto, "error": last_error[:200], "request_id": request_id})
     return False
-
 
 async def send_many(
     items: list[tuple[str, str, str, str | None]], *, request_id: str | None = None
@@ -71,7 +60,6 @@ async def send_many(
         else:
             fallos += 1
     return ok, fallos
-
 
 async def send_many_detailed(
     items: list[tuple[str, str, str, str | None]], *, request_id: str | None = None

@@ -1,11 +1,3 @@
-"""Baseline completo del dominio (equivalente a squema.sql) para BD nuevas.
-
-Idempotente: en BDs existentes creadas con squema.sql solo garantiza lo faltante
-(triggers, índices); en BDs nuevas crea todo el esquema desde cero.
-Alembic es la única fuente de verdad de aquí en adelante: squema.sql se conserva
-intacto en el repo como referencia, pero el sistema ya no lo usa.
-Revision ID: 0002
-"""
 import sqlalchemy as sa
 from alembic import op
 
@@ -193,7 +185,6 @@ CREATE INDEX IF NOT EXISTS idx_eventos_tracking_destinatario_campana ON eventos_
 CREATE INDEX IF NOT EXISTS idx_eventos_tracking_tipo ON eventos_tracking(tipo);
 """
 
-
 def _trigger_guard(table: str) -> str:
     """DO block: crea el trigger solo si no existe."""
     return f"""
@@ -209,7 +200,6 @@ def _trigger_guard(table: str) -> str:
     END $$;
     """
 
-
 def _exec_each(sql_multi: str) -> None:
     """asyncpg no admite múltiples comandos en un statement: ejecuta uno por uno (sin $$
     dentro de este SQL, el split por ';' es seguro)."""
@@ -217,13 +207,10 @@ def _exec_each(sql_multi: str) -> None:
         if stmt:
             op.execute(stmt)
 
-
 def upgrade():
-    # Extensiones
     op.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"')
     op.execute('CREATE EXTENSION IF NOT EXISTS "citext"')
 
-    # Enums (se crean completos solo si no existen — en BDs con squema.sql ya están)
     op.execute("""DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'rol_usuario') THEN
         CREATE TYPE rol_usuario AS ENUM ('admin_plataforma', 'admin_organizacion', 'analista');
@@ -249,7 +236,6 @@ def upgrade():
         CREATE TYPE nivel_madurez AS ENUM ('bajo', 'medio', 'alto', 'critico');
     END IF; END $$;""")
 
-    # Función de actualizado_en
     op.execute("""
     CREATE OR REPLACE FUNCTION fn_actualizar_timestamp()
     RETURNS TRIGGER AS $$
@@ -260,16 +246,12 @@ def upgrade():
     $$ LANGUAGE plpgsql;
     """)
 
-    # Tablas (ANTES que los triggers que referencian las tablas)
     _exec_each(DDL_TABLES)
 
-    # Triggers actualizado_en
     for table in ("organizaciones", "usuarios", "grupos", "destinatarios", "plantillas", "campanas"):
         op.execute(_trigger_guard(table))
 
-    # Índices
     _exec_each(DDL_INDEXES)
-
 
 def downgrade():
     for table in reversed(TABLES):

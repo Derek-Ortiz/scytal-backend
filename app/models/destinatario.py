@@ -7,7 +7,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
-
 class Destinatario(Base):
     __tablename__ = "destinatarios"
     __table_args__ = (UniqueConstraint("org_id", "correo", name="uk_destinatarios_org_correo"),)

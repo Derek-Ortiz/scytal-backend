@@ -1,4 +1,3 @@
-"""Schemas de /recipients (§4.6), incluida la importación por CSV."""
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -7,13 +6,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.auth import CorreoStr, _norm_email
 
-
 class DestinatarioCreateRequest(BaseModel):
     correo: CorreoStr
     grupo_id: uuid.UUID
 
     _norm = field_validator("correo", mode="before")(_norm_email)
-
 
 class DestinatarioPatchRequest(BaseModel):
     correo: Optional[CorreoStr] = None
@@ -25,8 +22,7 @@ class DestinatarioPatchRequest(BaseModel):
         if v is None:
             return None
         v = _norm_email(v)
-        return v if v else None  # "   " o "" → no-op (no se envió)
-
+        return v if v else None  
 
 class DestinatarioResponse(BaseModel):
     id_destinatarios: uuid.UUID
@@ -35,17 +31,14 @@ class DestinatarioResponse(BaseModel):
     activo: bool
     creado_en: datetime
 
-
 class InstantaneaResponse(BaseModel):
     campana_id: Optional[uuid.UUID] = None
     puntaje_phishing: float
     nivel: str
     creado_en: datetime
 
-
 class DestinatarioDetailResponse(DestinatarioResponse):
     historico: list[InstantaneaResponse] = []
-
 
 class DestinatarioListResponse(BaseModel):
     total: int
@@ -53,14 +46,12 @@ class DestinatarioListResponse(BaseModel):
     limit: int
     offset: int
 
-
 class CSVImportResponse(BaseModel):
     total_filas: int
     creados: int
-    duplicados: int      # repetidos dentro del archivo o ya existentes en la org
-    invalidos: int       # correo mal formado o grupo inexistente en la org
-    errores: list[str] = Field(default_factory=list)  # detalle por fila (máx 100)
-
+    duplicados: int      
+    invalidos: int       
+    errores: list[str] = Field(default_factory=list) 
 
 class CSVImportMeta:
     """Encabezados esperados del CSV (decisión propia, documentada en el contrato):

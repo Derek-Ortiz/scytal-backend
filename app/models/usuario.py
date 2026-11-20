@@ -10,7 +10,6 @@ from app.db.base import Base
 ROL_USUARIO = ("admin_plataforma", "admin_organizacion", "analista")
 ESTADO_USUARIO = ("pendiente_2fa", "activo", "suspendido", "inactivo")
 
-
 class Usuario(Base):
     __tablename__ = "usuarios"
     __table_args__ = (

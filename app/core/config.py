@@ -2,7 +2,6 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings
 
-
 class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://scytal:scytal_pass@db:5432/scytal"
     REDIS_URL: str = "redis://redis:6379/0"
@@ -39,7 +38,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         extra = "ignore"
-
 
 @lru_cache
 def get_settings() -> Settings:

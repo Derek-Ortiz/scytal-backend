@@ -9,7 +9,6 @@ from app.db.base import Base
 
 NIVEL_MADUREZ = ("bajo", "medio", "alto", "critico")
 
-
 class InstantaneaPhishing(Base):
     """Índice de phishing por destinatario al finalizar una campaña (25% no abrir + 25% no clic + 50% no enviar)."""
     __tablename__ = "instantaneas_phishing"

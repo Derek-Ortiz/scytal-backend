@@ -1,9 +1,3 @@
-"""Schemas de /templates (§4.7).
-
-Regla §5: si canal = correo, `asunto` es obligatorio — validado AQUÍ (schema), no solo en BD.
-Plantillas globales tienen org_id NULL: las lee toda organización; solo las edita su dueña
-(una org solo puede PATCH/DELETE las propias).
-"""
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -12,18 +6,15 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 CANALES = ("correo", "qr")
 
-
 def _no_vacio(v: str | None) -> str | None:
     if v is not None and not v.strip():
         raise ValueError("no puede estar vacío o ser solo espacios")
     return v
 
-
 def _valid_canal(v: str) -> str:
     if v not in CANALES:
         raise ValueError("canal inválido: solo 'correo' o 'qr'")
     return v
-
 
 class PlantillaCreateRequest(BaseModel):
     nombre: str = Field(min_length=1, max_length=255)
@@ -42,7 +33,6 @@ class PlantillaCreateRequest(BaseModel):
             raise ValueError("asunto es obligatorio cuando canal = 'correo'")
         return self
 
-
 class PlantillaPatchRequest(BaseModel):
     """PATCH parcial: la regla final canal⇒asunto se valida en el servicio (necesita el valor guardado)."""
 
@@ -55,7 +45,6 @@ class PlantillaPatchRequest(BaseModel):
 
     _v = field_validator("nombre", "perfil", "asunto", "contenido_html", "landing_html")(_no_vacio)
     _v_canal = field_validator("canal")(_valid_canal)
-
 
 class PlantillaImportarRequest(BaseModel):
     """POST /templates/importar (decisión: clonado de página real por URL).
@@ -73,7 +62,6 @@ class PlantillaImportarRequest(BaseModel):
     _v = field_validator("nombre", "perfil", "asunto")(_no_vacio)
     _v_canal = field_validator("canal")(_valid_canal)
 
-
 class PlantillaPreviewResponse(BaseModel):
     """GET /templates/{id}/previsualizar: enlace efímero (JWT 30 min) con la landing EXACTA
     que verá el destinatario; se abre directo en el navegador."""
@@ -81,10 +69,9 @@ class PlantillaPreviewResponse(BaseModel):
     url: str
     expira_en_minutos: int
 
-
 class PlantillaResponse(BaseModel):
     id_plantillas: uuid.UUID
-    org_id: Optional[uuid.UUID] = None  # None = plantilla global (visible para todas las orgs)
+    org_id: Optional[uuid.UUID] = None 
     nombre: str
     perfil: str
     canal: str
@@ -94,12 +81,10 @@ class PlantillaResponse(BaseModel):
     creado_en: datetime
     actualizado_en: datetime
 
-
 class PlantillaDetailResponse(PlantillaResponse):
     """Detalle con `en_uso`: referenciada por alguna campaña en pendiente/programada/activa."""
 
     en_uso: bool = False
-
 
 class PlantillaListResponse(BaseModel):
     total: int

@@ -18,7 +18,7 @@ from app.core.security import (
     generate_totp_secret, hash_password, totp_provisioning_uri,
     verify_password, verify_totp,
 )
-from app.models.auditoria import EventoAuditoria  # noqa: F401
+from app.models.auditoria import EventoAuditoria
 from app.models.historial import HistorialContrasenas
 from app.models.organizacion import Organizacion
 from app.models.usuario import Usuario
@@ -28,7 +28,6 @@ from app.services.password_service import validate_password
 
 ROTATE_DAYS = 90
 
-
 def _password_expired(user: Usuario) -> bool:
     if user.contrasena_actualizada_en is None:
         return True
@@ -37,11 +36,9 @@ def _password_expired(user: Usuario) -> bool:
         updated = updated.replace(tzinfo=timezone.utc)
     return datetime.now(timezone.utc) - updated > timedelta(days=ROTATE_DAYS)
 
-
-# ---------- Register ----------
 async def register(db: AsyncSession, correo: str, contrasena: str, nombre_org: str, slug: str | None, request_id: str) -> tuple[Usuario, Organizacion]:
     correo_norm = correo.lower().strip()
-    from app.core.security import needs_rehash  # noqa
+    from app.core.security import needs_rehash
 
     errors = await validate_password(contrasena)
     if errors:
@@ -69,8 +66,6 @@ async def register(db: AsyncSession, correo: str, contrasena: str, nombre_org: s
     await db.commit()
     return user, org
 
-
-# ---------- Login ----------
 class LoginResult(BaseModel):
     requires_totp: bool = True
     must_enroll_totp: bool = False
@@ -78,8 +73,6 @@ class LoginResult(BaseModel):
     provisional_access_token: Optional[str] = None
     requires_password_change: bool = False
 
-
-# ---------- Login ----------
 async def login(db: AsyncSession, correo: str, contrasena: str, ip: str, request_id: str) -> dict:
     correo_norm = correo.lower().strip()
     user = await user_repo.find_by_email(db, correo_norm)
@@ -87,7 +80,6 @@ async def login(db: AsyncSession, correo: str, contrasena: str, ip: str, request
         log_event("login_failed", request_id=request_id, correo=correo_norm)
         return {"ok": False}
 
-    # auditoría solo si hay org (opción B)
     if user.org_id is not None:
         await user_repo.save_audit(db, user.org_id, "login_ok", f"Login de {correo_norm}", actor_id=user.id_usuarios)
 
@@ -96,8 +88,6 @@ async def login(db: AsyncSession, correo: str, contrasena: str, ip: str, request
 
     cuenta_sin_totp = user.totp_secreto_enc is None
     if cuenta_sin_totp:
-        # Cuenta recién creada (pendiente_2fa sin secreto): token provisional solo para
-        # enroll/confirm/me/logout/password-change (get_current_user bloquea rutas de negocio).
         log_event("login_provisional_totp", request_id=request_id, user_id=str(user.id_usuarios))
         return {
             "ok": True,
@@ -122,8 +112,6 @@ async def login(db: AsyncSession, correo: str, contrasena: str, ip: str, request
         "user": user,
     }
 
-
-# ---------- Verify TOTP ----------
 async def verify_totp_login(db: AsyncSession, pending_token: str, codigo: str, request_id: str) -> dict:
     try:
         claims = decode_token(pending_token)
@@ -143,9 +131,7 @@ async def verify_totp_login(db: AsyncSession, pending_token: str, codigo: str, r
         raise ValueError("código TOTP inválido")
     user.ultimo_totp_step = step
 
-    # si el estado es pendiente_2fa y totp_habilitado, el usuario ya confirmó enroll; si aún no, sigue bloqueado
     if user.estado == "pendiente_2fa":
-        # Se puede seguir sin pending: permitimos, el confirm lo activará
         pass
 
     await user_repo.save_audit(db, user.org_id, "login_totp_ok", "TOTP verificado", actor_id=user.id_usuarios)
@@ -159,8 +145,6 @@ async def verify_totp_login(db: AsyncSession, pending_token: str, codigo: str, r
         "expires_in_minutes": s.JWT_ACCESS_EXPIRE_MINUTES,
     }
 
-
-# ---------- Refresh / logout ----------
 async def refresh(db: AsyncSession, refresh_token: str) -> dict:
     try:
         claims = decode_token(refresh_token)
@@ -180,14 +164,11 @@ async def refresh(db: AsyncSession, refresh_token: str) -> dict:
         "expires_in_minutes": s.JWT_ACCESS_EXPIRE_MINUTES,
     }
 
-
 async def logout(db: AsyncSession, user: Usuario) -> None:
     user.version_token += 1
     await user_repo.save_audit(db, user.org_id, "logout", "Logout", actor_id=user.id_usuarios)
     await db.commit()
 
-
-# ---------- TOTP enroll / confirm ----------
 def enroll_totp(user: Usuario) -> dict:
     secret = generate_totp_secret()
     user.totp_secreto_enc = encrypt_totp_secret(secret)
@@ -198,7 +179,6 @@ def enroll_totp(user: Usuario) -> dict:
     img.save(buf, format="PNG")
     qr_b64 = base64.b64encode(buf.getvalue()).decode()
     return {"secreto_en_claro": secret, "uri": uri, "qr_base64": qr_b64}
-
 
 async def confirm_totp(db: AsyncSession, user: Usuario, codigo: str) -> Usuario:
     if not user.totp_secreto_enc:
@@ -214,8 +194,6 @@ async def confirm_totp(db: AsyncSession, user: Usuario, codigo: str) -> Usuario:
     await db.commit()
     return user
 
-
-# ---------- Password change ----------
 async def change_password(db: AsyncSession, user: Usuario, actual: str, nueva: str) -> None:
     if not verify_password(actual, user.hash_contrasena):
         raise ValueError("contraseña actual incorrecta")

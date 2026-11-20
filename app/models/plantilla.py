@@ -9,7 +9,6 @@ from app.db.base import Base
 
 TIPO_CANAL = ("correo", "qr")
 
-
 class Plantilla(Base):
     __tablename__ = "plantillas"
 
