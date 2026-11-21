@@ -23,3 +23,15 @@ async def validate_password(password: str, recent_hashes: list[str] | None = Non
     if count > 0:
         errors.append("La contraseña aparece en filtraciones conocidas (HIBP)")
     return errors
+
+def fortaleza_local(password: str) -> dict:
+    """Chequeo rápido §4.2: zxcvbn + lista local, SIN llamar a HIBP."""
+    errors: list[str] = []
+    if len(password) < 10:
+        errors.append("La contraseña debe tener mínimo 10 caracteres")
+    if hibp_service.is_locally_common(password):
+        errors.append("La contraseña está en la lista de contraseñas comunes")
+    score = int(zxcvbn(password).get("score", 0))
+    if score < 3:
+        errors.append("La contraseña es demasiado débil (zxcvbn < 3)")
+    return {"score": score, "es_fuerte": not errors, "errores": errors}

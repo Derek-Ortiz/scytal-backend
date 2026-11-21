@@ -6,12 +6,17 @@ from fastapi.responses import JSONResponse
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 from app.middlewares.security_headers import SecurityHeadersMiddleware
+from app.routers.alerts import router as alerts_router
+from app.routers.audit import router as audit_router
 from app.routers.auth import router as auth_router
 from app.routers.campaigns import router as campaigns_router
 from app.routers.groups import router as groups_router
+from app.routers.maturity import router as maturity_router
 from app.routers.organizations import router as organizations_router
 from app.routers.previsualizar import router as previsualizar_router
+from app.routers.pwned import router as pwned_router
 from app.routers.recipients import router as recipients_router
+from app.routers.reports import router as reports_router
 from app.routers.templates import router as templates_router
 from app.routers.track import router as track_router
 from app.routers.users import router as users_router
@@ -64,6 +69,11 @@ def create_app() -> FastAPI:
     app.include_router(previsualizar_router)
     app.include_router(campaigns_router)
     app.include_router(track_router)
+    app.include_router(audit_router)
+    app.include_router(alerts_router)
+    app.include_router(maturity_router)
+    app.include_router(reports_router)
+    app.include_router(pwned_router)
     return app
 
 app = create_app()

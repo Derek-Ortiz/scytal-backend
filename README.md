@@ -146,6 +146,51 @@ Los tokens QR comparten la vida de los de destinatario (columna `campanas_qr_zon
 | POST | `/track/submit?t=` | Evento `subido` → **303** al awareness. **Sin modelo Pydantic de body**: los campos del formulario falso jamás se leen ni se guardan (§7). QR anónimo → solo awareness |
 | GET | `/track/awareness?t=` | Página educativa post-envío: estática y autocontenida, **siempre la misma respuesta** (el `t` no se valida) |
 
+### `/audit` (§4.12)
+
+Bitácora de la organización: SIEMPRE filtrada por `org_id` del JWT (§6.1). Todas las acciones del §6.6 ya se escriben desde sus módulos; aquí solo se leen.
+
+| Método | Ruta | Rol | Descripción |
+|---|---|---|---|
+| GET | `/audit` | `admin_organizacion`, `analista` | Lista paginada (limit ≤ 100) ordenada por fecha desc. Filtros: `?tipo=`, `?actor_id=`, `?desde=`, `?hasta=`. Cada fila incluye `actor_correo` resuelto (LEFT JOIN a usuarios) |
+
+### `/alerts` (§4.11)
+
+Alertas creadas por `/campaigns/{id}/finish` (1 por destinatario que envió datos en el formulario falso).
+
+| Método | Ruta | Rol | Descripción |
+|---|---|---|---|
+| GET | `/alerts` | `admin_organizacion`, `analista` | Lista paginada con filtros `?tipo=`, `?resuelto=true\|false` |
+| PATCH | `/alerts/{id}/resolve` | `admin_organizacion` | Marca `resuelto` + estampa `resuelto_en` y audita `alert_resolved` (§6.6). Ajena → 404. **Ya resuelta → 409 `CONFLICT`** |
+
+### `/maturity` (§4.10)
+
+Índices calculados con la fórmula §7 (25% no abrir + 25% no clic + 50% no enviar) que `finish` persiste en `instantaneas_phishing`.
+
+| Método | Ruta | Rol | Descripción |
+|---|---|---|---|
+| GET | `/maturity/recipients/{id}/history` | `admin_organizacion`, `analista` | Histórico de instantáneas del destinatario (más reciente primero, `limit ≤ 100`). Ajeno/inesistente → 404 |
+| GET | `/maturity/groups/{id}/trend` | `admin_organizacion`, `analista` | Serie cronológica por campaña finalizada: `{campana_id, nombre, finalizada_en, promedio, n_destinatarios}` |
+| GET | `/maturity/organization/summary` | `admin_organizacion`, `analista` | Dashboard: `{destinatarios_activos, indice_promedio, distribucion: {bajo,medio,alto,critico}, campanas: {total, completadas}, ultima_finalizacion}`. Sin datos → `null`/ceros |
+
+### `/reports` (§4.13)
+
+Exportables en `?format=csv|pdf` (`Content-Disposition: attachment`); `format` distinto → **422 `VALIDATION_ERROR`**. Cada export audita `report_exported`. PDF con `reportlab` (latín-1: sin `→` ni caracteres exóticos en el contenido).
+
+| Método | Ruta | Rol | Descripción |
+|---|---|---|---|
+| GET | `/reports/campaigns/{id}/export?format=` | `admin_organizacion`, `analista` | Metadata de campaña + embudo (con %) + tabla por destinatario (enviado/abrió/clicó/envió, puntaje, nivel). Ajena → 404 |
+| GET | `/reports/groups/{id}/export?format=` | `admin_organizacion`, `analista` | Índice promedio + distribución por nivel (último puntaje) + tabla de destinatarios con su último puntaje. Ajeno → 404 |
+
+### `/pwned` (§4.2)
+
+Proxy hacia HIBP con **k-anonimato** + chequeo rápido de fortaleza. El navegador nunca habla con HIBP (el API key y el tráfico quedan del lado del backend).
+
+| Método | Ruta | Rol | Descripción |
+|---|---|---|---|
+| GET | `/pwned/range/{prefijo5}` | Público o autenticado | Devuelve `{prefijo, total_conocidas, conteos: {sufijo: n}}` para los 5 primeros hex del SHA-1 (cache Redis `hibp:{prefijo}` + `Cache-Control: max-age=3600`). Prefijo ≠ 5 hex → **422**; HIBP caído → **503 `HIBP_UNAVAILABLE`**. Rate limit (§6.2): **10/min por IP** si es público, **20/min por sesión** si manda Bearer válido |
+| POST | `/pwned/strength-check` | Público o autenticado | Body `{password}` → `{score (0-4), es_fuerte, errores}` con zxcvbn + lista local, **sin llamar a HIBP**. Mismo rate limit (clave separada `rl:pwned:strength`) |
+
 ## 4. Seguridad implementada
 
 - **Contraseñas**: Argon2id (OWASP), mín. 10 caracteres, zxcvbn ≥ 3, lista local, HIBP (k-anonimato, cache Redis), historial últimas 3, rotación 90 días.
@@ -167,13 +212,13 @@ app/
   core/                # config, security (Argon2/JWT/Fernet/TOTP), rate_limit, logging
   db/                  # engine async + Base
   models/              # 13 tablas del dominio (auth + orgs + campañas + zonas QR + tracking + alertas)
-  schemas/             # Pydantic v2 por módulo (auth, organizacion, usuario, grupo, destinatario, plantilla, campana)
-  routers/             # auth.py, organizations.py, users.py, groups.py, recipients.py, templates.py, campaigns.py, previsualizar.py
-  services/            # auth, password (zxcvbn+HIBP), hibp, email (reintentos+delay+lote detallado), usuario, organizacion, grupo, destinatario (CSV), plantilla (leyenda), campana (launch/cancel/finish/feedback/QR), qr (PNG base64), maturity (puro), clonador (importar plantilla por URL: descarga estática A + render Chromium B, guardas SSRF, HTML domesticado, CSS inlineado = snapshot autocontenido)
+  schemas/             # Pydantic v2 por módulo (auth, organizacion, usuario, grupo, destinatario, plantilla, campana, auditoria, alerta, maturity)
+  routers/             # auth.py, organizations.py, users.py, groups.py, recipients.py, templates.py, campaigns.py, previsualizar.py, track.py, audit.py, alerts.py, maturity.py, reports.py, pwned.py
+  services/            # auth, password (zxcvbn+HIBP), hibp (rango k-anonimato + cache), email (reintentos+delay+lote detallado), usuario, organizacion, grupo, destinatario (CSV), plantilla (leyenda), campana (launch/cancel/finish/feedback/QR), qr (PNG base64), maturity (puro), report (CSV/PDF con reportlab), clonador (importar plantilla por URL: descarga estática A + render Chromium B, guardas SSRF, HTML domesticado, CSS inlineado = snapshot autocontenido)
   repositories/        # acceso a datos con filtro org_id (§6.1)
   middlewares/         # security_headers (CORS ya en main, cabeceras, request_id)
-alembic/               # 0001 baseline auth + 0002 dominio + 0003 zonas QR y expiración (fuente única del esquema)
-tests/                 # unit/ + integration/ (pytest, 102 pruebas)
+alembic/               # 0001 baseline auth + 0002 dominio + 0003 zonas QR + 0004 expiración QR (fuente única del esquema)
+tests/                 # unit/ + integration/ (pytest, 133 pruebas)
 seeds/seed_admin.py    # admin_plataforma inicial
 seeds/seed_templates.py # 3 plantillas globales (login genérico, clon Facebook, clon Instagram)
 migrations/add_slug.sql # referencia histórica (el sistema ya no lo usa)
@@ -202,7 +247,7 @@ $env:TOTP_ENCRYPTION_KEY=(python -c "from cryptography.fernet import Fernet; pri
 python -m pytest tests -q
 ```
 
-Cobertura actual (114 pruebas):
+Cobertura actual (133 pruebas):
 | # | Prueba | Qué valida |
 |---|---|---|
 | 1-3 | slugify | Normalización de slugs (unitaria) |
@@ -231,6 +276,12 @@ Cobertura actual (114 pruebas):
 | 61-68 | **Importador por URL: integración** | Flujo A con redirect (asunto/nombre autogenerados, correo con `{{enlace}}`, landing domesticada + CSS inlineado + leyenda ausente, en el listado), fallback a B con render mockeado, render B real con Chromium local (skip si no está), errores 422 (500, no-HTML, >2 MB, ftp, canal inválido), SSRF real bloqueado (127.0.0.1/localhost/169.254.169.254/192.168.x), permisos (analista 403, sin token 401), previsualización: enlace efímero → GET público 200 text/html con CSS inline y CSP sin JS, token falso/vencido → 404, permisos del enlace (analista OK, otra org 404, sin sesión 401) |
 | 69-75 | **/track: unitarias** | Reescritura del `action` (doble/comilla simple, sin duplicar `?t=`, sin form sin cambios, marcador `ACCION_FORM = /track/submit`), pixel GIF 1x1, awareness sin scripts ni recursos externos |
 | 76-80 | **/track: integración** | Flujo completo open→click→landing (`action` reescrito)→submit (body del form DESCARTADO, 303)→awareness; token vencido → respuesta genérica sin métricas e idéntica a la de un token inexistente; QR anónimo (zona marcada, 0 eventos, embudo intacto), QR inválido sin lanzar y tras cancelar; rate limit 60/min → 429 + `Retry-After` |
+| 81-82 | **/audit: integración** | Listado con `register`+`actor_correo`, filtros por tipo/actor/fecha, paginación y limit 101 → 422, sin token 401; aislamiento (org B no ve eventos de org A) |
+| 83-84 | **/alerts: integración** | Lista tras `finish` (1 alerta), filtros `tipo`/`resuelto`, resolve → 200 + fila `alert_resolved` en auditoría, **2ª resolve → 409**, 404 inexistente/ajena; analista lee pero resolve → 403, org B ve lista vacía |
+| 85-86 | **/maturity: integración** | trend con 2 campañas (promedios 87.5 y 62.5 en orden), history por destinatario, summary con distribución=2, campanas 2/2 y última finalización; 404 de grupo/destinatario ajeno, summary de org vacía en null/ceros, 401 sin token |
+| 87-88 | **/reports: integración** | CSV campaña (BOM, embudo con %, 2 filas por destinatario) + PDF `%PDF-`, `format=xlsx` → 422, campaña ajena → 404, auditoría `report_exported`; CSV/PDF de grupo, analista exporta, grupo de otra org → 404 |
+| 89-94 | **/pwned: unitarias** | `fortaleza_local` débil (lista local + zxcvbn < 3), corta (<10), fuerte (score ≥ 3, sin errores); parser del rango HIBP (líneas OK/malas/vacías) y `_count_in` reusándolo |
+| 95-99 | **/pwned: integración** | range con rango mockeado (200 + `Cache-Control` + prefijo en mayúsculas), prefijos malos (3/6/letras) → 422, HIBP caído → 503 `HIBP_UNAVAILABLE`; strength-check débil/fuerte/corto + body vacío 422; rate limit IP (11ª llamada → 429 + `Retry-After: 60`, strength-check con clave aparte sigue pasando); rate limit sesión autenticada (21ª → 429) |
 
 ## 8. Notas de despliegue local
 
