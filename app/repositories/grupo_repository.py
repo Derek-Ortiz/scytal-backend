@@ -95,3 +95,30 @@ async def grupos_con_informe(db: AsyncSession, org_id: uuid.UUID) -> tuple[dict[
     res2 = await db.execute(q, {"org_id": str(org_id)})
     promedios = {gid: float(avg) for gid, avg in res2.all()}
     return conteos, promedios
+
+QUERY_FILAS_GRUPO = text("""
+    SELECT d.correo, d.activo, ip.puntaje_phishing, ip.nivel
+    FROM destinatarios d
+    LEFT JOIN LATERAL (
+        SELECT i.puntaje_phishing, i.nivel
+        FROM instantaneas_phishing i
+        WHERE i.destinatario_id = d.id_destinatarios
+        ORDER BY i.creado_en DESC
+        LIMIT 1
+    ) ip ON TRUE
+    WHERE d.org_id = :org_id AND d.grupo_id = :grupo_id
+    ORDER BY d.correo
+""")
+
+async def filas_informe_grupo(db: AsyncSession, org_id: uuid.UUID, grupo_id: uuid.UUID) -> list[dict]:
+    """Cada destinatario activo del grupo con su ÚLTIMO puntaje/nivel, para el reporte exportable."""
+    res = await db.execute(QUERY_FILAS_GRUPO, {"org_id": str(org_id), "grupo_id": str(grupo_id)})
+    return [
+        {
+            "correo": str(m["correo"]),
+            "activo": bool(m["activo"]),
+            "puntaje": float(m["puntaje_phishing"]) if m["puntaje_phishing"] is not None else None,
+            "nivel": m["nivel"],
+        }
+        for m in res.mappings()
+    ]
