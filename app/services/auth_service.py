@@ -24,6 +24,7 @@ from app.models.organizacion import Organizacion
 from app.models.usuario import Usuario
 from app.repositories import organizacion_repository as org_repo
 from app.repositories import usuario_repository as user_repo
+from app.services import hibp_service
 from app.services.password_service import validate_password
 
 ROTATE_DAYS = 90
@@ -77,14 +78,28 @@ async def login(db: AsyncSession, correo: str, contrasena: str, ip: str, request
     correo_norm = correo.lower().strip()
     user = await user_repo.find_by_email(db, correo_norm)
     if user is None or not user.activo or not verify_password(contrasena, user.hash_contrasena):
+        if user is not None and user.org_id is not None:
+            await user_repo.save_audit(db, user.org_id, "login_failed", f"Login fallido de {correo_norm}", actor_id=user.id_usuarios)
+            await db.commit()
         log_event("login_failed", request_id=request_id, correo=correo_norm)
         return {"ok": False}
 
     if user.org_id is not None:
         await user_repo.save_audit(db, user.org_id, "login_ok", f"Login de {correo_norm}", actor_id=user.id_usuarios)
 
+    conteo = await hibp_service.hibp_count(contrasena)
+    if conteo > 0:
+        user.debe_cambiar_contrasena = True
+        await user_repo.save_audit(
+            db, user.org_id, "password_breached",
+            f"Contraseña filtrada detectada en login ({conteo} apariciones en HIBP); cambio forzado",
+            actor_id=user.id_usuarios,
+        )
+        log_event("password_breached", request_id=request_id, user_id=str(user.id_usuarios), hibp_count=conteo)
+
     must_change = bool(user.debe_cambiar_contrasena) or _password_expired(user)
     s = get_settings()
+    await db.commit()
 
     cuenta_sin_totp = user.totp_secreto_enc is None
     if cuenta_sin_totp:

@@ -39,7 +39,7 @@ El contenedor `api` ejecuta automáticamente al arrancar: `alembic upgrade head 
 | Método | Ruta | Auth | Descripción |
 |---|---|---|---|
 | POST | `/auth/register` | Público | Crea org + `admin_organizacion` en `pendiente_2fa`. Body: `{correo, contrasena, nombre_organizacion, slug?}` |
-| POST | `/auth/login` | Público (rate-limit 10/15min) | Cuenta con TOTP: `{requires_totp:true, pending_token, ...}`. Cuenta nueva sin TOTP: `{must_enroll_totp:true, provisional_access_token, ...}` |
+| POST | `/auth/login` | Público (rate-limit 10/15min) | Cuenta con TOTP: `{requires_totp:true, pending_token, ...}`. Cuenta nueva sin TOTP: `{must_enroll_totp:true, provisional_access_token, ...}`. Si la contraseña está en HIBP (§7) → `requires_password_change:true` + cambio forzado persistido; HIBP caído no bloquea (fail-open). Audita `login_ok`/`login_failed` |
 | POST | `/auth/login/verify-totp` | Público con `pending_token` (rate-limit 5/15min) | Body `{codigo, pending_token}` → `{access_token, refresh_token, expires_in_minutes}` |
 | POST | `/auth/refresh` | Refresh token | Body `{refresh_token}` |
 | POST | `/auth/logout` | Bearer access (cualquier estado) | Invalida sesión |
@@ -218,7 +218,7 @@ app/
   repositories/        # acceso a datos con filtro org_id (§6.1)
   middlewares/         # security_headers (CORS ya en main, cabeceras, request_id)
 alembic/               # 0001 baseline auth + 0002 dominio + 0003 zonas QR + 0004 expiración QR (fuente única del esquema)
-tests/                 # unit/ + integration/ (pytest, 133 pruebas)
+tests/                 # unit/ + integration/ (pytest, 137 pruebas)
 seeds/seed_admin.py    # admin_plataforma inicial
 seeds/seed_templates.py # 3 plantillas globales (login genérico, clon Facebook, clon Instagram)
 migrations/add_slug.sql # referencia histórica (el sistema ya no lo usa)
@@ -247,7 +247,7 @@ $env:TOTP_ENCRYPTION_KEY=(python -c "from cryptography.fernet import Fernet; pri
 python -m pytest tests -q
 ```
 
-Cobertura actual (133 pruebas):
+Cobertura actual (137 pruebas):
 | # | Prueba | Qué valida |
 |---|---|---|
 | 1-3 | slugify | Normalización de slugs (unitaria) |
@@ -282,6 +282,7 @@ Cobertura actual (133 pruebas):
 | 87-88 | **/reports: integración** | CSV campaña (BOM, embudo con %, 2 filas por destinatario) + PDF `%PDF-`, `format=xlsx` → 422, campaña ajena → 404, auditoría `report_exported`; CSV/PDF de grupo, analista exporta, grupo de otra org → 404 |
 | 89-94 | **/pwned: unitarias** | `fortaleza_local` débil (lista local + zxcvbn < 3), corta (<10), fuerte (score ≥ 3, sin errores); parser del rango HIBP (líneas OK/malas/vacías) y `_count_in` reusándolo |
 | 95-99 | **/pwned: integración** | range con rango mockeado (200 + `Cache-Control` + prefijo en mayúsculas), prefijos malos (3/6/letras) → 422, HIBP caído → 503 `HIBP_UNAVAILABLE`; strength-check débil/fuerte/corto + body vacío 422; rate limit IP (11ª llamada → 429 + `Retry-After: 60`, strength-check con clave aparte sigue pasando); rate limit sesión autenticada (21ª → 429) |
+| 100-103 | **Login + HIBP (§7): integración** | Contraseña filtrada en login → `requires_password_change:true`, `debe_cambiar_contrasena` persistido y fila `password_breached` en auditoría; contraseña limpia no fuerza el cambio; HIBP caído (-1) no bloquea (fail-open); `login_ok` y `login_failed` quedan en `eventos_auditoria` (§6.6) |
 
 ## 8. Notas de despliegue local
 
