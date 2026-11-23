@@ -201,11 +201,13 @@ jobs:
             sed -i '/^API_IMAGE=/d' .env
             printf 'API_IMAGE=%s\n' '$DEPLOY_IMAGE' >> .env
             grep -q '^API_IMAGE=$DEPLOY_IMAGE$' .env
+            echo 'API_IMAGE configurada correctamente'
+            docker compose --env-file /opt/scytal/.env config --images
           "
 
       - name: Descargar y desplegar imagen
         run: |
-          ssh scytal 'set -e; cd /opt/scytal; docker compose pull api; docker compose up -d; docker image prune -f'
+          ssh scytal 'set -e; cd /opt/scytal; docker compose -f /opt/scytal/docker-compose.yml --env-file /opt/scytal/.env pull api; docker compose -f /opt/scytal/docker-compose.yml --env-file /opt/scytal/.env up -d; docker image prune -f'
 
       - name: Verificar salud del API
         run: |
