@@ -190,7 +190,7 @@ jobs:
           ssh scytal 'mkdir -p /opt/scytal'
           scp deploy/docker-compose.prod.yml scytal:/opt/scytal/docker-compose.yml
 
-      - name: Validar y actualizar .env
+      - name: Validar configuración remota
         run: |
           ssh scytal "set -e
             cd /opt/scytal
@@ -198,16 +198,21 @@ jobs:
               echo 'ERROR: /opt/scytal/.env no existe en la EC2'
               exit 1
             fi
-            sed -i '/^API_IMAGE=/d' .env
-            printf 'API_IMAGE=%s\n' '$DEPLOY_IMAGE' >> .env
-            grep -q '^API_IMAGE=$DEPLOY_IMAGE$' .env
-            echo 'API_IMAGE configurada correctamente'
-            docker compose --env-file /opt/scytal/.env config --images
+            export API_IMAGE='$DEPLOY_IMAGE'
+            test -n \"\$API_IMAGE\"
+            docker compose -f /opt/scytal/docker-compose.yml --env-file /opt/scytal/.env config --images
           "
 
       - name: Descargar y desplegar imagen
         run: |
-          ssh scytal 'set -e; cd /opt/scytal; docker compose -f /opt/scytal/docker-compose.yml --env-file /opt/scytal/.env pull api; docker compose -f /opt/scytal/docker-compose.yml --env-file /opt/scytal/.env up -d; docker image prune -f'
+          ssh scytal "set -e
+            cd /opt/scytal
+            export API_IMAGE='$DEPLOY_IMAGE'
+            test -n \"\$API_IMAGE\"
+            docker compose -f /opt/scytal/docker-compose.yml --env-file /opt/scytal/.env pull api
+            docker compose -f /opt/scytal/docker-compose.yml --env-file /opt/scytal/.env up -d
+            docker image prune -f
+          "
 
       - name: Verificar salud del API
         run: |
