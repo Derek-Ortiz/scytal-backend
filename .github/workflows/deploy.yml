@@ -2,19 +2,23 @@ name: CI/CD
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  group: scytal-deploy-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
-    name: Pruebas y seguridad
+    name: Pruebas unitarias y seguridad
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,56 +29,128 @@ jobs:
           cache: pip
 
       - name: Instalar dependencias
-        run: pip install -r requirements.txt bandit pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install bandit pip-audit pytest pytest-asyncio pytest-cov
 
-      - name: Pruebas unitarias
+      - name: Ejecutar pruebas unitarias con cobertura
         env:
-          DATABASE_URL: postgresql+asyncpg://ci:ci@127.0.0.1:59999/ci
-          REDIS_URL: redis://127.0.0.1:59998/0
+          DATABASE_URL: postgresql+asyncpg://scytal:scytal_pass@127.0.0.1:5432/scytal
+          REDIS_URL: redis://127.0.0.1:6379/0
           JWT_SECRET: secreto-solo-para-ci-0123456789
-        run: python -m pytest tests/unit -q
+          TOTP_ENCRYPTION_KEY: ""
+        run: python -m pytest tests/unit -q --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml
 
-      - name: Análisis de seguridad del código (bandit)
-        run: bandit -r app -ll
+      - name: Ejecutar Bandit
+        run: bandit -r app -ll -f txt -o bandit.txt
 
-      - name: Auditoría de dependencias (pip-audit)
+      - name: Ejecutar pip-audit
         continue-on-error: true
         run: pip-audit -r requirements.txt
+
+      - name: Subir cobertura
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: warn
+
+      - name: Subir salida de Bandit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit
+          path: bandit.txt
+          if-no-files-found: warn
+
+  integration:
+    name: Pruebas de integración
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: scytal
+          POSTGRES_USER: scytal
+          POSTGRES_PASSWORD: scytal_pass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U scytal -d scytal"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest pytest-asyncio pytest-cov
+
+      - name: Aplicar migraciones
+        env:
+          DATABASE_URL: postgresql+asyncpg://scytal:scytal_pass@127.0.0.1:5432/scytal
+        run: python -m alembic upgrade head
+
+      - name: Ejecutar pruebas de integración
+        env:
+          DATABASE_URL: postgresql+asyncpg://scytal:scytal_pass@127.0.0.1:5432/scytal
+          REDIS_URL: redis://127.0.0.1:6379/0
+          JWT_SECRET: secreto-solo-para-ci-0123456789
+          TOTP_ENCRYPTION_KEY: ""
+        run: python -m pytest tests/integration -q
 
   build:
     name: Construir y publicar imagen
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     outputs:
-      image: ${{ steps.image.outputs.name }}
+      image_sha: ${{ steps.image.outputs.full_sha }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Iniciar sesión en ghcr.io
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Definir nombre de imagen (minúsculas)
+      - name: Construir y publicar imagen
         id: image
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          echo "full_sha=${DOCKERHUB_USERNAME}/scytal-backend:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
-      - name: Build y push (latest + SHA)
+      - name: Build y push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
-            ${{ steps.image.outputs.name }}:latest
-            ${{ steps.image.outputs.name }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/scytal-backend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/scytal-backend:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -83,57 +159,74 @@ jobs:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    environment: production
     env:
-      IMAGE: ${{ needs.build.outputs.image }}
+      DEPLOY_IMAGE: ${{ needs.build.outputs.image_sha }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configurar SSH
+      - name: Preparar SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           BACKEND_HOST: ${{ secrets.BACKEND_HOST }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "$BACKEND_HOST" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
           cat > ~/.ssh/config <<CONF
           Host scytal
             HostName $BACKEND_HOST
             User ubuntu
-            IdentityFile ~/.ssh/deploy_key
+            IdentityFile ~/.ssh/id_ed25519
             IdentitiesOnly yes
-            StrictHostKeyChecking accept-new
+            StrictHostKeyChecking yes
           CONF
           chmod 600 ~/.ssh/config
 
-      - name: Copiar compose a la EC2
+      - name: Copiar compose de producción
         run: |
           ssh scytal 'mkdir -p /opt/scytal'
           scp deploy/docker-compose.prod.yml scytal:/opt/scytal/docker-compose.yml
 
-      - name: Apuntar .env a la imagen de este commit
+      - name: Validar y actualizar .env
         run: |
-          ssh scytal "grep -q '^API_IMAGE=' /opt/scytal/.env \
-            && sed -i 's|^API_IMAGE=.*|API_IMAGE=${IMAGE}:${GITHUB_SHA}|' /opt/scytal/.env \
-            || echo 'API_IMAGE=${IMAGE}:${GITHUB_SHA}' >> /opt/scytal/.env"
-          ssh scytal "grep -q '^API_IMAGE=${IMAGE}:${GITHUB_SHA}$' /opt/scytal/.env"
+          ssh scytal "set -e
+            cd /opt/scytal
+            if [ ! -f .env ]; then
+              echo 'ERROR: /opt/scytal/.env no existe en la EC2'
+              exit 1
+            fi
+            sed -i '/^API_IMAGE=/d' .env
+            printf 'API_IMAGE=%s\n' '$DEPLOY_IMAGE' >> .env
+            grep -q '^API_IMAGE=$DEPLOY_IMAGE$' .env
+          "
 
-      - name: Desplegar
+      - name: Descargar y desplegar imagen
         run: |
-          ssh scytal 'cd /opt/scytal && docker compose pull api && docker compose up -d && docker image prune -f'
+          ssh scytal 'set -e; cd /opt/scytal; docker compose pull api; docker compose up -d; docker image prune -f'
 
       - name: Verificar salud del API
         run: |
-          for i in $(seq 1 12); do
+          set -e
+          ok=false
+          for i in $(seq 1 20); do
             if ssh scytal 'curl -fsS http://localhost:8000/health' > /dev/null 2>&1; then
+              ok=true
               echo "API sano (intento $i)"
-              exit 0
+              break
             fi
-            sleep 5
+            sleep 3
           done
-          echo "El API no respondió /health tras 12 intentos"
-          ssh scytal 'cd /opt/scytal && docker compose logs --tail=50 api'
-          exit 1
+          if [ "$ok" != "true" ]; then
+            echo "El API no respondió /health tras 20 intentos"
+            ssh scytal 'cd /opt/scytal && docker compose logs --tail=80 api'
+            exit 1
+          fi
+
+      - name: Escribir resumen
+        run: |
+          echo "## Despliegue Scytal" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Imagen: \`${DEPLOY_IMAGE}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SHA: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
