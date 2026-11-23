@@ -1,7 +1,8 @@
 # Scytal — Backend
 
-API FastAPI. **Fase Auth** (§4.1) + **Fase Organizations/Users** (§4.3/§4.4) implementadas; el resto de módulos
-(groups, recipients, templates, campaigns, track, maturity, alerts, audit, reports) se integra por fases según
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+API FastAPI con los **57 endpoints de la especificación implementados** (§4.1–§4.13), integrados por fases según
 `Scytal_Especificacion_Backend.md`.
 
 Stack: Python 3.12 · FastAPI · SQLAlchemy 2.0 async · PostgreSQL 15 · Redis 7 · Argon2id · TOTP (pyotp) · JWT.
@@ -293,3 +294,31 @@ Cobertura actual (137 pruebas):
 ## 9. Prompt para conectar con el frontend
 
 Ver `prompt_frontend.md` en esta carpeta. Contiene el contrato completo que el frontend necesita conocer: base URL, flujo de registro → login → TOTP → enroll/confirm, tokens y tiempos de expiración, formato de errores, rate limits y reglas de seguridad (qué guardar y qué no).
+
+## 10. CI/CD y despliegue
+
+- **CI** (`.github/workflows/deploy.yml`): en cada PR y push a `main` corren las pruebas unitarias, `bandit -r app -ll` y `pip-audit` (este último no bloquea).
+- **Build**: solo en push a `main`, publica la imagen en `ghcr.io/<repo>` con etiquetas `latest` y el SHA del commit.
+- **Deploy**: copia `deploy/docker-compose.prod.yml` a `/opt/scytal/` por SSH, apunta `API_IMAGE` en el `.env` de la EC2 a la imagen del commit, hace `pull/up` y verifica `GET /health` con reintentos.
+- **Dependencias**: Dependabot abre PRs semanales para pip, Docker y GitHub Actions.
+- El template de entorno de producción es `deploy/env.example` (todas las variables con `CAMBIAR`; nunca versionar el `.env` real).
+
+## 11. Licencia
+
+Este proyecto se distribuye bajo la licencia **MIT** — ver [LICENSE](LICENSE).
+
+Las licencias de todas las dependencias están listadas en [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md):
+no hay dependencias GPL/AGPL ni otras incompatibles con MIT.
+
+## 12. Uso responsable
+
+Scytal es una **herramienta de capacitación en ciberseguridad** para simular campañas de phishing controladas
+dentro de una organización.
+
+- **Prohibido** usarla contra personas sin su consentimiento. Su propósito es únicamente formar y medir la
+  resiliencia de los equipos autorizados.
+- Las campañas y sus resultados solo deben ejecutarse con el **consentimiento explícito** de la organización
+  participante y dentro del alcance acordado.
+- El sistema **no almacena lo que se escribe en los formularios simulados**: el endpoint `/track/submit` ni
+  siquiera recibe esos campos (§7 de la especificación). Solo se registra que ocurrió el envío.
+- Cada acción sensible queda auditada en `eventos_auditoria` (§6.6), de modo que el uso queda trazado.

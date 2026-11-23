@@ -26,7 +26,7 @@ def is_locally_common(password: str) -> bool:
 
 async def hibp_count(password: str) -> int:
     """Retorna el conteo de filtraciones, -1 si no se pudo consultar (fail-open en registro suave)."""
-    sha1 = hashlib.sha1(password.encode()).hexdigest().upper()
+    sha1 = hashlib.sha1(password.encode(), usedforsecurity=False).hexdigest().upper()
     prefix, suffix = sha1[:5], sha1[5:]
     conteos = await rango(prefix)
     if conteos is None:

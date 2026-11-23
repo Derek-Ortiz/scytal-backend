@@ -39,7 +39,6 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://scytal:scytal_pass@db:5432/scytal
       REDIS_URL: redis://redis:6379/0
-      SMTP_HOST: mailhog
     ports:
       - "8000:8000"
     command: sh -c "python -m alembic upgrade head && python -m seeds.seed_admin && python -m seeds.seed_templates && uvicorn app.main:app --host 0.0.0.0 --port 8000"

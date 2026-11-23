@@ -1,0 +1,54 @@
+# Se copia a /opt/scytal/docker-compose.yml en la EC2 por GitHub Actions.
+name: scytal
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-scytal}
+      POSTGRES_USER: ${POSTGRES_USER:-scytal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en /opt/scytal/.env}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scytal} -d ${POSTGRES_DB:-scytal}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  api:
+    image: ${API_IMAGE:?Define API_IMAGE en /opt/scytal/.env}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-scytal}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-scytal}
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    command: sh -c "python -m alembic upgrade head && python -m seeds.seed_admin && python -m seeds.seed_templates && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+
+volumes:
+  db_data:
