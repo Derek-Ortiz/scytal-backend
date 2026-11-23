@@ -144,7 +144,7 @@ jobs:
           echo "full_sha=${DOCKERHUB_USERNAME}/scytal-backend:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Build y push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
