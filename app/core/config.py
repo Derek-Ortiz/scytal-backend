@@ -14,6 +14,13 @@ class Settings(BaseSettings):
 
     TOTP_ENCRYPTION_KEY: str = ""
 
+    # Proveedor de correo: "smtp" (MailHog, Brevo, Gmail, etc.) o "ses" (Amazon SES por API).
+    EMAIL_PROVIDER: str = "smtp"
+    # Remitente común; si se deja vacío se usa SMTP_FROM (compatibilidad).
+    EMAIL_FROM: str = ""
+    AWS_REGION: str = "us-east-1"
+    SES_CONFIGURATION_SET: str = ""
+
     SMTP_HOST: str = "mailhog"
     SMTP_PORT: int = 1025
     SMTP_FROM: str = "no-reply@scytal.local"

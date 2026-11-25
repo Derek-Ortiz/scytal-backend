@@ -234,6 +234,25 @@ Regla de capas: routers → services → repositories; nunca SQL directo en rout
 
 Ver `.env.example`. Obligatorias: `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `TOTP_ENCRYPTION_KEY`. Además `PLATFORM_ADMIN_EMAIL` y `PLATFORM_ADMIN_PASSWORD` para el seed, `CORS_ALLOWED_ORIGINS` con el origen del frontend, y `HIBP_API_URL`.
 
+### Proveedor de correo
+
+`EMAIL_PROVIDER` elige cómo salen los correos (invitaciones, credenciales, campañas y feedback):
+
+| Valor | Uso | Variables |
+|---|---|---|
+| `smtp` (default) | MailHog en dev, o cualquier SMTP externo (Brevo, Gmail, SendGrid…) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_USE_TLS`, `SMTP_FROM` |
+| `ses` | Amazon SES por API (sesv2) desde la EC2 | `EMAIL_FROM`, `AWS_REGION`, `SES_CONFIGURATION_SET` (opcional) |
+
+Con `ses` no se guardan llaves de AWS en `.env`: boto3 toma credenciales temporales del rol de la instancia (`LabInstanceProfile` en AWS Academy), así que no hay que actualizar secretos cuando la sesión del Learner Lab se reinicia. Requisitos:
+
+1. En la consola de SES (misma región que `AWS_REGION`) verificar la identidad del remitente (`EMAIL_FROM`).
+2. Mientras la cuenta esté en el *sandbox* de SES, verificar también cada correo destinatario (o usar el simulador `success@simulator.amazonses.com`).
+3. Asignar `LabInstanceProfile` a la EC2 del backend y permitir que el contenedor llegue al servicio de metadatos:
+   `aws ec2 modify-instance-metadata-options --instance-id <id> --http-put-response-hop-limit 2 --http-endpoint enabled`
+4. Probar desde la EC2: `aws sesv2 get-account --region us-east-1`.
+
+Los reintentos (`SMTP_RETRY_*`) y la pausa entre correos de un lote (`SMTP_BULK_DELAY_SECONDS`) aplican a ambos proveedores.
+
 ## 7. Pruebas
 
 ```bash
