@@ -240,7 +240,7 @@ Ver `.env.example`. Obligatorias: `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `TO
 
 | Valor | Uso | Variables |
 |---|---|---|
-| `smtp` (default) | MailHog en dev, o cualquier SMTP externo (Brevo, Gmail, SendGrid…) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_USE_TLS`, `SMTP_FROM` |
+| `smtp` (default) | MailHog en dev; en prod **MailerSend** (`smtp.mailersend.net:587`), o cualquier otro SMTP (Brevo, Gmail…) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_USE_TLS`, `SMTP_FROM` |
 | `ses` | Amazon SES por API (sesv2) desde la EC2 | `EMAIL_FROM`, `AWS_REGION`, `SES_CONFIGURATION_SET` (opcional) |
 
 Con `ses` no se guardan llaves de AWS en `.env`: boto3 toma credenciales temporales del rol de la instancia (`LabInstanceProfile` en AWS Academy), así que no hay que actualizar secretos cuando la sesión del Learner Lab se reinicia. Requisitos:
@@ -252,6 +252,8 @@ Con `ses` no se guardan llaves de AWS en `.env`: boto3 toma credenciales tempora
 4. Probar desde la EC2: `aws sesv2 get-account --region us-east-1`.
 
 Los reintentos (`SMTP_RETRY_*`) y la pausa entre correos de un lote (`SMTP_BULK_DELAY_SECONDS`) aplican a ambos proveedores.
+
+**MailerSend (proveedor SMTP recomendado):** host `smtp.mailersend.net`, puerto `587` (STARTTLS, único puerto), `SMTP_USE_TLS=true`. Pasos: verificar el dominio en MailerSend (registros SPF/DKIM en DNS), crear un *SMTP user* en `Domains > {dominio} > SMTP users` (copiar usuario y clave, que se muestra una sola vez), y usar un `SMTP_FROM` de ese dominio verificado. El plan gratuito permite ~3,000 correos/mes sin tope diario.
 
 ## 7. Pruebas
 
