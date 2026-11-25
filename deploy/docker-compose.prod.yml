@@ -1,4 +1,6 @@
 # Se copia a /opt/scytal/docker-compose.yml en la EC2 por GitHub Actions.
+# El Caddyfile se copia junto a este archivo (ver workflow). Caddy termina HTTPS
+# en el puerto 8000 (scytal-back.duckdns.org:8000) y hace proxy a la API interna.
 name: scytal
 
 services:
@@ -39,8 +41,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-scytal}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-scytal}
       REDIS_URL: redis://redis:6379/0
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     command: sh -c "python -m alembic upgrade head && python -m seeds.seed_admin && python -m seeds.seed_templates && uvicorn app.main:app --host 0.0.0.0 --port 8000"
     depends_on:
       db:
@@ -50,5 +52,21 @@ services:
       mailhog:
         condition: service_started
 
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8000:8000"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
 volumes:
   db_data:
+  caddy_data:
+  caddy_config:

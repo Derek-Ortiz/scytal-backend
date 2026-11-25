@@ -189,6 +189,7 @@ jobs:
         run: |
           ssh scytal 'mkdir -p /opt/scytal'
           scp deploy/docker-compose.prod.yml scytal:/opt/scytal/docker-compose.yml
+          scp deploy/Caddyfile scytal:/opt/scytal/Caddyfile
 
       - name: Validar configuración remota
         run: |
